@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const { FEEDBACK_TYPES } = require('../constants');
 
 const optionSchema = new mongoose.Schema(
   {
@@ -10,22 +9,15 @@ const optionSchema = new mongoose.Schema(
     },
     image: { type: String, default: null },
     isCorrect: { type: Boolean, default: false },
-    correctExplanation: { type: String, default: '' },
-    feedback: {
-      hint: { type: String, default: '' },
-      roadmap: { type: String, default: '' },
-      link: { type: String, default: '' },
-      explanation: { type: String, default: '' },
-    },
   },
   { _id: true }
 );
 
-const questionSchema = new mongoose.Schema(
+const normalQuestionSchema = new mongoose.Schema(
   {
     exam: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Exam',
+      ref: 'NormalExam',
       required: true,
       index: true,
     },
@@ -48,4 +40,4 @@ const questionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model('Question', questionSchema);
+module.exports = mongoose.model('NormalQuestion', normalQuestionSchema);

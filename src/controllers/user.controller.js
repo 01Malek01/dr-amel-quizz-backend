@@ -32,6 +32,12 @@ const getUser = asyncHandler(async (req, res) => {
   res.json({ success: true, data: toSafeUser(user) });
 });
 
+const clean = (value) => {
+  if (value === undefined || value === null) return undefined;
+  const s = String(value).trim();
+  return s ? s.toLowerCase() : undefined;
+};
+
 const createUser = asyncHandler(async (req, res) => {
   const { name, username, email, nationalId, password, group, role = 'student', isActive } = req.body;
 
@@ -39,23 +45,15 @@ const createUser = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'الاسم الكامل وكلمة المرور مطلوبان');
   }
 
-  const hasEmail = email ? String(email).trim() : '';
-  const hasUsername = username ? String(username).trim() : '';
-  const hasNationalId = nationalId ? String(nationalId).trim() : '';
-
-  if (!hasEmail && !hasUsername && !hasNationalId) {
-    throw new ApiError(400, 'أضف واحدًا على الأقل من: رقم التعريف، البريد الإلكتروني، أو اسم المستخدم');
-  }
-
-  const resolvedUsername =
-    hasUsername ||
-    (hasEmail ? hasEmail.toLowerCase().split('@')[0] : null);
+  const safeUsername = clean(username);
+  const safeEmail = clean(email);
+  const safeNationalId = clean(nationalId);
 
   const data = {
     name,
-    username: resolvedUsername?.toLowerCase(),
-    email: hasEmail ? hasEmail.toLowerCase() : undefined,
-    nationalId: hasNationalId || undefined,
+    username: safeUsername,
+    email: safeEmail,
+    nationalId: safeNationalId,
     password,
     role,
     group: group || null,
@@ -75,17 +73,40 @@ const updateUser = asyncHandler(async (req, res) => {
 
   const { name, username, email, nationalId, password, group, isActive } = req.body;
 
-  if (name !== undefined) user.name = name;
-  if (username !== undefined) user.username = String(username).trim().toLowerCase() || null;
-  if (email !== undefined) user.email = String(email).trim().toLowerCase() || null;
-  if (nationalId !== undefined) user.nationalId = String(nationalId).trim() || null;
-  if (group !== undefined) user.group = group || null;
-  if (isActive !== undefined) user.isActive = isActive;
-  if (password) user.password = password;
+  const set = {};
+  const unset = {};
 
-  await user.save();
-  const populated = await User.findById(user._id).populate('group');
-  res.json({ success: true, data: toSafeUser(populated) });
+  if (name !== undefined) set.name = String(name).trim();
+  if (password) set.password = password;
+  if (group !== undefined) set.group = group || null;
+  if (isActive !== undefined) set.isActive = isActive;
+
+  if (username !== undefined) {
+    const v = String(username).trim().toLowerCase();
+    if (v) set.username = v;
+    else unset.username = '';
+  }
+  if (email !== undefined) {
+    const v = String(email).trim().toLowerCase();
+    if (v) set.email = v;
+    else unset.email = '';
+  }
+  if (nationalId !== undefined) {
+    const v = String(nationalId).trim();
+    if (v) set.nationalId = v;
+    else unset.nationalId = '';
+  }
+
+  const update = {};
+  if (Object.keys(set).length) update.$set = set;
+  if (Object.keys(unset).length) update.$unset = unset;
+
+  const updated = await User.findByIdAndUpdate(req.params.id, update, {
+    new: true,
+    runValidators: true,
+  }).populate('group');
+
+  res.json({ success: true, data: toSafeUser(updated) });
 });
 
 const deleteUser = asyncHandler(async (req, res) => {

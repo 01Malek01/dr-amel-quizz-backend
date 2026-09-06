@@ -7,6 +7,7 @@ const Exam = require('../models/Exam');
 const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
+const FeedbackRating = require('../models/FeedbackRating');
 
 const overview = asyncHandler(async (req, res) => {
   const [students, groups, exams, publishedExams, sessions, completedSessions, attempts] =
@@ -35,6 +36,10 @@ const overview = asyncHandler(async (req, res) => {
     },
   ]);
 
+  const badgesAgg = await Session.aggregate([
+    { $group: { _id: null, totalBadges: { $sum: '$badges' } } },
+  ]);
+
   const c = correctDetails[0] || {};
 
   res.json({
@@ -52,6 +57,7 @@ const overview = asyncHandler(async (req, res) => {
       avgAttemptsBeforeCorrect: Math.round((c.avgAttempts || 0) * 100) / 100,
       avgTimePerQuestion: Math.round((c.avgTime || 0) * 100) / 100,
       completedQuestions: c.count || 0,
+      badges: badgesAgg[0]?.totalBadges || 0,
     },
   });
 });
@@ -135,6 +141,7 @@ const studentsStats = asyncHandler(async (req, res) => {
         sessions: { $sum: 1 },
         correct: { $sum: '$correctCount' },
         stars: { $sum: '$stars' },
+        badges: { $sum: '$badges' },
         timeSum: { $sum: '$totalTimeSeconds' },
       },
     },
@@ -154,6 +161,7 @@ const studentsStats = asyncHandler(async (req, res) => {
         sessions: r.sessions,
         correct: r.correct,
         stars: r.stars,
+        badges: r.badges,
         avgTimeSeconds: r.sessions ? r.timeSum / r.sessions : 0,
       };
     })
@@ -237,7 +245,7 @@ const perStudentExam = asyncHandler(async (req, res) => {
     match.completedAt = range;
   }
 
-  const [sessions, students, groups, exams] = await Promise.all([
+  const [sessions, students, groups, exams, questionCounts] = await Promise.all([
     Session.find(match)
       .populate({ path: 'user', populate: { path: 'group' } })
       .populate({ path: 'exam', populate: { path: 'topic', populate: { path: 'chapter' } } })
@@ -245,7 +253,13 @@ const perStudentExam = asyncHandler(async (req, res) => {
     User.find({ role: 'student' }).sort({ name: 1 }).select('name username'),
     Group.find().sort({ name: 1 }).select('name'),
     Exam.find().sort({ title: 1 }).select('title'),
+    Question.aggregate([{ $group: { _id: '$exam', count: { $sum: 1 } } }]),
   ]);
+
+  const questionCountByExam = {};
+  questionCounts.forEach((q) => {
+    questionCountByExam[String(q._id)] = q.count;
+  });
 
   const data = sessions
     .map((s) => {
@@ -255,6 +269,9 @@ const perStudentExam = asyncHandler(async (req, res) => {
         : 0;
       const correctTime = correctDetails.reduce((sum, d) => sum + (d.totalTimeSeconds || 0), 0);
       const avgTimePerQuestion = correctDetails.length ? correctTime / correctDetails.length : 0;
+
+      const totalQuestions = questionCountByExam[String(s.exam?._id)] || s.details.length || 0;
+      const totalTries = (s.details || []).reduce((sum, d) => sum + (d.attempts || 0), 0);
 
       return {
         sessionId: s._id,
@@ -269,7 +286,10 @@ const perStudentExam = asyncHandler(async (req, res) => {
         correctCount: s.correctCount,
         wrongAttempts: s.wrongCount,
         skipped: s.skippedCount,
+        totalQuestions,
+        totalTries,
         stars: s.stars,
+        badges: s.badges || 0,
         avgTriesBeforeCorrect: Math.round(avgTries * 100) / 100,
         avgTimePerQuestion: Math.round(avgTimePerQuestion * 100) / 100,
         completedAt: s.completedAt,
@@ -287,4 +307,134 @@ const perStudentExam = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { overview, byFeedback, examsStats, studentsStats, examDetail, perStudentExam };
+const feedbackRatings = asyncHandler(async (req, res) => {
+  const { exam = '', student = '', group = '' } = req.query;
+
+  const match = {};
+  if (exam) match.exam = exam;
+  if (student) match.user = student;
+
+  if (!exam && !student && !group) {
+    return res.json({
+      success: true,
+      data: {
+        questions: [],
+        students: [],
+        avgPerQuestion: [],
+        overallAvg: 0,
+      },
+    });
+  }
+
+  if (group) {
+    const members = await User.find({ group }).select('_id');
+    match.user = { $in: members.map((m) => m._id) };
+  }
+
+  const exams = exam
+    ? await Exam.find({ _id: match.exam }).select('title')
+    : await Exam.find({ _id: { $in: (await FeedbackRating.distinct('exam', match)) } }).select('title');
+
+  const ratings = await FeedbackRating.find(match)
+    .populate({ path: 'user', populate: { path: 'group' } })
+    .populate({ path: 'question', select: 'text order' })
+    .sort({ createdAt: 1 });
+
+  const questionOrderMap = {};
+  const examQuestionCount = {};
+
+  const examIds = exams.map((e) => e._id);
+  if (examIds.length > 0) {
+    const questionsAll = await Question.find({ exam: { $in: examIds } }).sort({ order: 1 }).select('text order exam');
+    questionsAll.forEach((q) => {
+      const key = String(q.exam);
+      if (!questionOrderMap[key]) questionOrderMap[key] = [];
+      questionOrderMap[key].push({ questionId: q._id, order: q.order, text: q.text });
+    });
+    questionsAll.forEach((q) => {
+      examQuestionCount[String(q.exam)] = (examQuestionCount[String(q.exam)] || 0) + 1;
+    });
+  }
+
+  const byKey = {};
+  for (const r of ratings) {
+    const studentId = String(r.user?._id);
+    const examId = String(r.exam);
+    const key = `${studentId}|${examId}`;
+    if (!byKey[key]) {
+      const examTitle = exams.find((e) => String(e._id) === examId)?.title || '';
+      byKey[key] = {
+        studentId,
+        studentName: r.user?.name || 'بدون اسم',
+        group: r.user?.group?.name || null,
+        examId,
+        examTitle,
+        perQuestion: {},
+      };
+    }
+    const score = Math.round((r.score || 0) * 100) / 100;
+    byKey[key].perQuestion[String(r.question?._id)] = { order: r.question?.order, score };
+  }
+
+  const students = Object.values(byKey).map((s) => {
+    const ordered = (questionOrderMap[s.examId] || [])
+      .map((q) => ({
+        questionId: q.questionId,
+        order: q.order,
+        text: q.text,
+        score: s.perQuestion[String(q.questionId)]?.score ?? null,
+      }))
+      .sort((a, b) => a.order - b.order);
+    const totalQuestionCount = examQuestionCount[s.examId] || ordered.filter((x) => x.score != null).length;
+    const sum = ordered.reduce((acc, x) => acc + (x.score != null ? x.score : 0), 0);
+    const total = totalQuestionCount
+      ? Math.round((sum / totalQuestionCount) * 100) / 100
+      : 0;
+    return {
+      studentId: s.studentId,
+      studentName: s.studentName,
+      group: s.group,
+      examId: s.examId,
+      examTitle: s.examTitle,
+      perQuestion: ordered,
+      total,
+    };
+  });
+
+  const questionsUnion = {};
+  students.forEach((s) =>
+    s.perQuestion.forEach((q) => {
+      if (q.score != null && !questionsUnion[q.questionId]) {
+        questionsUnion[q.questionId] = { questionId: q.questionId, order: q.order, text: q.text };
+      }
+    })
+  );
+  const questions = Object.values(questionsUnion).sort((a, b) => a.order - b.order);
+
+  const avgPerQuestion = questions.map((q) => {
+    const scores = students.flatMap((s) =>
+      s.perQuestion.filter((x) => x.questionId === q.questionId && x.score != null).map((x) => x.score)
+    );
+    const avg = scores.length
+      ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 100) / 100
+      : 0;
+    return { questionId: q.questionId, order: q.order, text: q.text, avg, count: scores.length };
+  });
+
+  const totals = students.filter((s) => s.total > 0).map((s) => s.total);
+  const overallAvg = totals.length
+    ? Math.round((totals.reduce((a, b) => a + b, 0) / totals.length) * 100) / 100
+    : 0;
+
+  res.json({
+    success: true,
+    data: {
+      questions,
+      students,
+      avgPerQuestion,
+      overallAvg,
+    },
+  });
+});
+
+module.exports = { overview, byFeedback, examsStats, studentsStats, examDetail, perStudentExam, feedbackRatings };

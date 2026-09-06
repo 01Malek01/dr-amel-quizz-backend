@@ -6,6 +6,7 @@ const Topic = require('../models/Topic');
 const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
+const FeedbackRating = require('../models/FeedbackRating');
 
 const listExams = asyncHandler(async (req, res) => {
   const { topic = '', chapter = '', status = '', search = '' } = req.query;
@@ -64,7 +65,7 @@ const getExam = asyncHandler(async (req, res) => {
 });
 
 const createExam = asyncHandler(async (req, res) => {
-  const { title, description, topic, feedbackType, attemptsPerQuestion } = req.body;
+  const { title, description, topic, feedbackType, attemptsPerQuestion, questionTimeSeconds } = req.body;
 
   if (!title) throw new ApiError(400, 'عنوان الاختبار مطلوب');
   if (!topic) throw new ApiError(400, 'اختر موضوعًا لهذا الاختبار');
@@ -78,6 +79,7 @@ const createExam = asyncHandler(async (req, res) => {
     topic,
     feedbackType: feedbackType || 'hint',
     attemptsPerQuestion: attemptsPerQuestion || 3,
+    questionTimeSeconds: questionTimeSeconds !== undefined ? questionTimeSeconds : 90,
     createdBy: req.user._id,
   });
 
@@ -88,12 +90,13 @@ const updateExam = asyncHandler(async (req, res) => {
   const exam = await Exam.findById(req.params.id);
   if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
 
-  const { title, description, topic, feedbackType, attemptsPerQuestion } = req.body;
+  const { title, description, topic, feedbackType, attemptsPerQuestion, questionTimeSeconds } = req.body;
   if (title !== undefined) exam.title = title;
   if (description !== undefined) exam.description = description;
   if (topic !== undefined) exam.topic = topic;
   if (feedbackType !== undefined) exam.feedbackType = feedbackType;
   if (attemptsPerQuestion !== undefined) exam.attemptsPerQuestion = attemptsPerQuestion;
+  if (questionTimeSeconds !== undefined) exam.questionTimeSeconds = questionTimeSeconds;
 
   await exam.save();
   res.json({ success: true, data: exam });
@@ -141,6 +144,7 @@ const deleteExam = asyncHandler(async (req, res) => {
   await Attempt.deleteMany({ exam: exam._id });
   await Session.deleteMany({ exam: exam._id });
   await Question.deleteMany({ exam: exam._id });
+  await FeedbackRating.deleteMany({ exam: exam._id });
   await exam.deleteOne();
 
   res.json({ success: true, message: 'تم حذف الاختبار وسجلاته' });

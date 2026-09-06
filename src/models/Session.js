@@ -10,6 +10,7 @@ const detailSchema = new mongoose.Schema(
     attempts: { type: Number, default: 0 },
     correctAttempt: { type: Number, default: null },
     isCorrect: { type: Boolean, default: false },
+    firstTryCorrect: { type: Boolean, default: false },
     totalTimeSeconds: { type: Number, default: 0 },
   },
   { _id: false }
@@ -42,6 +43,7 @@ const sessionSchema = new mongoose.Schema(
     wrongCount: { type: Number, default: 0 },
     skippedCount: { type: Number, default: 0 },
     stars: { type: Number, default: 0 },
+    badges: { type: Number, default: 0 },
     details: { type: [detailSchema], default: [] },
   },
   { timestamps: true }

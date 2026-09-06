@@ -21,6 +21,7 @@ const examSchema = new mongoose.Schema(
       default: 'hint',
     },
     attemptsPerQuestion: { type: Number, default: 3, min: 1, max: 10 },
+    questionTimeSeconds: { type: Number, default: 90, min: 0 },
     isPublished: { type: Boolean, default: false },
     code: { type: String, unique: true, sparse: true },
     publishedAt: { type: Date, default: null },

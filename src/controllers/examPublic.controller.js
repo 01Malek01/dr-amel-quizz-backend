@@ -6,6 +6,7 @@ const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
 const Group = require('../models/Group');
+const FeedbackRating = require('../models/FeedbackRating');
 
 const getMeta = asyncHandler(async (req, res) => {
   const exam = await Exam.findOne({ code: req.params.code, isPublished: true }).populate({
@@ -29,6 +30,7 @@ const getMeta = asyncHandler(async (req, res) => {
       chapter: exam.topic?.chapter?.title,
       questionCount,
       attemptsPerQuestion: exam.attemptsPerQuestion,
+      questionTimeSeconds: exam.questionTimeSeconds,
       feedbackType: exam.feedbackType,
     },
   });
@@ -59,12 +61,23 @@ const start = asyncHandler(async (req, res) => {
 
   const questions = await Question.find({ exam: exam._id }).sort({ order: 1 });
 
+  const ratings = await FeedbackRating.find({
+    user: req.user._id,
+    exam: exam._id,
+  }).select('question');
+
   const sanitized = questions.map((q) => ({
     _id: q._id,
     order: q.order,
     text: q.text,
     image: q.image,
-    options: q.options.map((o) => ({ _id: o._id, text: o.text, image: o.image })),
+    options: q.options.map((o) => ({
+      _id: o._id,
+      text: o.text,
+      image: o.image,
+      isCorrect: o.isCorrect,
+      correctExplanation: o.isCorrect ? o.correctExplanation || '' : '',
+    })),
   }));
 
   res.json({
@@ -74,8 +87,10 @@ const start = asyncHandler(async (req, res) => {
       examTitle: exam.title,
       examDescription: exam.description,
       attemptsPerQuestion: exam.attemptsPerQuestion,
+      questionTimeSeconds: exam.questionTimeSeconds,
       questionCount: sanitized.length,
       questions: sanitized,
+      ratedQuestions: ratings.map((r) => r.question),
     },
   });
 });
@@ -120,12 +135,14 @@ const submit = asyncHandler(async (req, res) => {
 
   const isCorrect = !!option.isCorrect;
   const seconds = Math.max(Number(timeTakenSeconds) || 0, 0);
+  const isFirstTryCorrect = isCorrect && attemptNumber === 1;
 
   const payload = {
     question: questionId,
     attempts: (detail?.attempts || 0) + 1,
     isCorrect: detail?.isCorrect || isCorrect,
     correctAttempt: detail?.correctAttempt ?? (isCorrect ? attemptNumber : null),
+    firstTryCorrect: (detail?.firstTryCorrect || false) || isFirstTryCorrect,
     totalTimeSeconds: (detail?.totalTimeSeconds || 0) + seconds,
   };
 
@@ -136,10 +153,15 @@ const submit = asyncHandler(async (req, res) => {
   }
 
   let starsGained = 0;
+  let badgeEarned = false;
   if (isCorrect) {
     session.correctCount += 1;
     starsGained = Math.max(4 - attemptNumber, 0);
     session.stars += starsGained;
+    if (isFirstTryCorrect && !(detail?.firstTryCorrect)) {
+      badgeEarned = true;
+      session.badges += 1;
+    }
   } else {
     session.wrongCount += 1;
   }
@@ -169,6 +191,7 @@ const submit = asyncHandler(async (req, res) => {
       attemptNumber,
       attemptsLeft,
       starsGained,
+      badgeEarned,
       exhausted,
       feedback: isCorrect
         ? null
@@ -203,6 +226,23 @@ const complete = asyncHandler(async (req, res) => {
   const skippedCount = Math.max(questionCount - (session.correctCount + session.wrongCount), 0);
   session.skippedCount = skippedCount;
 
+  const attemptedQuestionIds = (session.details || [])
+    .filter((d) => d.question && d.attempts > 0)
+    .map((d) => d.question);
+  if (attemptedQuestionIds.length > 0) {
+    const rated = await FeedbackRating.find({
+      user: req.user._id,
+      exam: exam._id,
+      question: { $in: attemptedQuestionIds },
+    }).distinct('question');
+    const missing = attemptedQuestionIds.filter(
+      (id) => !rated.some((r) => String(r) === String(id))
+    );
+    if (missing.length > 0) {
+      throw new ApiError(400, 'أكمل مقياس الفائدة المدركة للتغذية الراجعة أولًا');
+    }
+  }
+
   res.json({
     success: true,
     data: {
@@ -213,6 +253,7 @@ const complete = asyncHandler(async (req, res) => {
       wrongAttempts: session.wrongCount,
       skippedCount,
       stars: session.stars,
+      badges: session.badges,
       feedbackType: session.feedbackType,
     },
   });

@@ -32,6 +32,7 @@ const setQuestions = asyncHandler(async (req, res) => {
       text: String(o.text || '').trim(),
       image: o.image || null,
       isCorrect: !!o.isCorrect,
+      correctExplanation: o.correctExplanation ? String(o.correctExplanation).trim() : '',
       feedback: {
         hint: o.feedback?.hint || '',
         roadmap: o.feedback?.roadmap || '',
