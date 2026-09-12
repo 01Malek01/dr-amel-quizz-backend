@@ -1,5 +1,6 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { escapeRegex } = require('../utils/escapeRegex');
 const Survey = require('../models/Survey');
 const SurveyQuestion = require('../models/SurveyQuestion');
 const SurveyResponse = require('../models/SurveyResponse');
@@ -16,7 +17,7 @@ const listSurveys = asyncHandler(async (req, res) => {
   const { search = '', status = '' } = req.query;
 
   const filter = {};
-  if (search.trim()) filter.title = { $regex: search.trim(), $options: 'i' };
+  if (search.trim()) filter.title = { $regex: escapeRegex(search.trim()), $options: 'i' };
 
   const surveys = await Survey.find(filter)
     .populate('exam', 'title')
@@ -166,7 +167,6 @@ const setQuestions = asyncHandler(async (req, res) => {
   res.json({ success: true, data: saved });
 });
 
-const escapeRegex = (value) => String(value).replace(/[-/\\^$*+?.()|[\]{}]/g, (m) => `\\${m}`);
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 

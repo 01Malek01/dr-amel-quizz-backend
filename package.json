@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "seed": "node src/scripts/seedData.js"
+    "seed": "node src/scripts/seedData.js",
+    "simulate": "node src/scripts/simulateResults.js",
+    "simulate:clean": "node src/scripts/simulateResults.js --clean",
+    "test": "node --test --test-concurrency=1 \"tests/*.test.js\"",
+    "test:watch": "node --test --watch \"tests/*.test.js\""
   },
   "license": "MIT",
   "dependencies": {

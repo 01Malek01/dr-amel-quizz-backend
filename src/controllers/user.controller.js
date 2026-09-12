@@ -1,9 +1,32 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { escapeRegex } = require('../utils/escapeRegex');
 const { toSafeUser } = require('../utils/serialize');
 const User = require('../models/User');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
+
+const FIELD_LABELS = {
+  username: 'اسم المستخدم',
+  email: 'البريد الإلكتروني',
+  nationalId: 'الرقم الوطني',
+};
+
+/**
+ * يمنع تكرار معرّفات الدخول برسالة واضحة، بدل الاعتماد على فهرس قاعدة
+ * البيانات وحده (الذي يعيد رسالة عامة، ولا يعمل إن لم يُبنَ الفهرس).
+ */
+const assertIdentifiersFree = async (values, excludeUserId = null) => {
+  for (const [field, value] of Object.entries(values)) {
+    if (!value) continue;
+    const query = { [field]: value };
+    if (excludeUserId) query._id = { $ne: excludeUserId };
+    const taken = await User.findOne(query).select('_id');
+    if (taken) {
+      throw new ApiError(409, `${FIELD_LABELS[field] || field} مستخدم بالفعل لحساب آخر`);
+    }
+  }
+};
 
 const listUsers = asyncHandler(async (req, res) => {
   const { search = '', groupId = '', role = 'student' } = req.query;
@@ -13,7 +36,7 @@ const listUsers = asyncHandler(async (req, res) => {
   if (groupId) filter.group = groupId;
 
   if (search.trim()) {
-    const regex = new RegExp(search.trim(), 'i');
+    const regex = new RegExp(escapeRegex(search.trim()), 'i');
     filter.$or = [
       { name: regex },
       { username: regex },
@@ -62,6 +85,12 @@ const createUser = asyncHandler(async (req, res) => {
 
   Object.keys(data).forEach((key) => data[key] === undefined && delete data[key]);
 
+  await assertIdentifiersFree({
+    username: data.username,
+    email: data.email,
+    nationalId: data.nationalId,
+  });
+
   const user = await User.create(data);
   const populated = await User.findById(user._id).populate('group');
   res.status(201).json({ success: true, data: toSafeUser(populated) });
@@ -97,15 +126,18 @@ const updateUser = asyncHandler(async (req, res) => {
     else unset.nationalId = '';
   }
 
-  const update = {};
-  if (Object.keys(set).length) update.$set = set;
-  if (Object.keys(unset).length) update.$unset = unset;
+  await assertIdentifiersFree(
+    { username: set.username, email: set.email, nationalId: set.nationalId },
+    user._id
+  );
 
-  const updated = await User.findByIdAndUpdate(req.params.id, update, {
-    new: true,
-    runValidators: true,
-  }).populate('group');
+  // لا نستخدم findByIdAndUpdate هنا: فهو يتخطى خطاف pre('save')، فتُخزَّن كلمة
+  // المرور كنص صريح ويعجز الطالب عن تسجيل الدخول بعدها.
+  user.set(set);
+  Object.keys(unset).forEach((field) => user.set(field, undefined));
+  await user.save();
 
+  const updated = await User.findById(user._id).populate('group');
   res.json({ success: true, data: toSafeUser(updated) });
 });
 

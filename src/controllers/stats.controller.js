@@ -103,7 +103,6 @@ const examsStats = asyncHandler(async (req, res) => {
         _id: '$exam',
         sessions: { $sum: 1 },
         correct: { $sum: '$correctCount' },
-        stars: { $sum: '$stars' },
         wrongAttempts: { $sum: '$wrongCount' },
         timeSum: { $sum: '$totalTimeSeconds' },
       },
@@ -126,7 +125,6 @@ const examsStats = asyncHandler(async (req, res) => {
       sessions: r.sessions,
       totalQuestions: 0,
       avgCorrect: r.sessions ? r.correct / r.sessions : 0,
-      avgStars: r.sessions ? r.stars / r.sessions : 0,
       avgWrongAttempts: r.sessions ? r.wrongAttempts / r.sessions : 0,
       avgTimeSeconds: r.sessions ? r.timeSum / r.sessions : 0,
     };
@@ -143,7 +141,6 @@ const studentsStats = asyncHandler(async (req, res) => {
         _id: '$user',
         sessions: { $sum: 1 },
         correct: { $sum: '$correctCount' },
-        stars: { $sum: '$stars' },
         badges: { $sum: '$badges' },
         timeSum: { $sum: '$totalTimeSeconds' },
       },
@@ -163,12 +160,11 @@ const studentsStats = asyncHandler(async (req, res) => {
         feedbackType: u?.group?.feedbackType || null,
         sessions: r.sessions,
         correct: r.correct,
-        stars: r.stars,
         badges: r.badges,
         avgTimeSeconds: r.sessions ? r.timeSum / r.sessions : 0,
       };
     })
-    .sort((a, b) => b.stars - a.stars || b.sessions - a.sessions);
+    .sort((a, b) => b.badges - a.badges || b.correct - a.correct || b.sessions - a.sessions);
 
   res.json({ success: true, data });
 });
@@ -291,7 +287,6 @@ const perStudentExam = asyncHandler(async (req, res) => {
         skipped: s.skippedCount,
         totalQuestions,
         totalTries,
-        stars: s.stars,
         badges: s.badges || 0,
         avgTriesBeforeCorrect: Math.round(avgTries * 100) / 100,
         avgTimePerQuestion: Math.round(avgTimePerQuestion * 100) / 100,

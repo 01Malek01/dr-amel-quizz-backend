@@ -35,7 +35,16 @@ app.use(
 );
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(morgan('dev'));
+
+// في Express 5 يكون req.body غير معرّف إذا لم يُرسل Content-Type مطابق،
+// وكل المتحكمات تفكّ منه خصائص — فنضمن وجود كائن دائمًا.
+app.use((req, res, next) => {
+  if (req.body === undefined || req.body === null) req.body = {};
+  next();
+});
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan('dev'));
+}
 
 app.use(
   '/uploads',

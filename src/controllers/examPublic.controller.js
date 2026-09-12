@@ -199,12 +199,10 @@ const submit = asyncHandler(async (req, res) => {
     session.details.push({ question: questionId, ...payload });
   }
 
-  let starsGained = 0;
+  // لا يوجد نظام نجوم — المكافأة الوحيدة لكل سؤال هي شارة المحاولة الأولى
   let badgeEarned = false;
   if (isCorrect) {
     session.correctCount += 1;
-    starsGained = Math.max(4 - attemptNumber, 0);
-    session.stars += starsGained;
     if (isFirstTryCorrect && !(detail?.firstTryCorrect)) {
       badgeEarned = true;
       session.badges += 1;
@@ -237,7 +235,6 @@ const submit = asyncHandler(async (req, res) => {
       isCorrect,
       attemptNumber,
       attemptsLeft,
-      starsGained,
       badgeEarned,
       exhausted,
       feedback: isCorrect
@@ -255,24 +252,16 @@ const complete = asyncHandler(async (req, res) => {
   const exam = await Exam.findOne({ code });
   if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
 
-  const session = await Session.findOneAndUpdate(
-    { user: req.user._id, exam: exam._id, status: 'in-progress' },
-    {
-      status: 'completed',
-      completedAt: new Date(),
-      totalTimeSeconds: Math.max(Number(totalTimeSeconds) || 0, 0),
-    },
-    { returnDocument: 'after' }
-  );
+  const session = await Session.findOne({
+    user: req.user._id,
+    exam: exam._id,
+    status: 'in-progress',
+  });
 
   if (!session) throw new ApiError(400, 'لا يوجد اختبار نشط لإنهائه');
 
-  await Exam.updateOne({ _id: exam._id }, { $inc: { completions: 1 } });
-
-  const questionCount = await Question.countDocuments({ exam: exam._id });
-  const skippedCount = Math.max(questionCount - (session.correctCount + session.wrongCount), 0);
-  session.skippedCount = skippedCount;
-
+  // يجب التحقق من التقييمات قبل أي تعديل على الجلسة: لو أُنهيت الجلسة أولًا ثم
+  // رُفض الطلب، يبقى الطالب عالقًا — لا يستطيع التقييم ولا الإنهاء ولا الإعادة.
   const attemptedQuestionIds = (session.details || [])
     .filter((d) => d.question && d.attempts > 0)
     .map((d) => d.question);
@@ -289,6 +278,19 @@ const complete = asyncHandler(async (req, res) => {
       throw new ApiError(400, 'أكمل مقياس الفائدة المدركة للتغذية الراجعة أولًا');
     }
   }
+
+  const questionCount = await Question.countDocuments({ exam: exam._id });
+  const skippedCount = Math.max(questionCount - (session.correctCount + session.wrongCount), 0);
+
+  session.set({
+    status: 'completed',
+    completedAt: new Date(),
+    totalTimeSeconds: Math.max(Number(totalTimeSeconds) || 0, 0),
+    skippedCount,
+  });
+  await session.save();
+
+  await Exam.updateOne({ _id: exam._id }, { $inc: { completions: 1 } });
 
   let history = null;
   if (exam.showScoreHistory) {
@@ -312,7 +314,6 @@ const complete = asyncHandler(async (req, res) => {
         wrongCount: s.wrongCount,
         skippedCount: s.skippedCount || 0,
         timeSeconds: s.totalTimeSeconds || 0,
-        stars: s.stars,
         badges: s.badges || 0,
         completedAt: s.completedAt,
       };
@@ -330,7 +331,6 @@ const complete = asyncHandler(async (req, res) => {
       correctCount: session.correctCount,
       wrongAttempts: session.wrongCount,
       skippedCount,
-      stars: session.stars,
       badges: session.badges,
       feedbackType: session.feedbackType,
     },

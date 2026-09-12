@@ -1,6 +1,8 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { escapeRegex } = require('../utils/escapeRegex');
 const Topic = require('../models/Topic');
+const Chapter = require('../models/Chapter');
 const Exam = require('../models/Exam');
 const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
@@ -11,7 +13,7 @@ const listTopics = asyncHandler(async (req, res) => {
 
   const filter = {};
   if (chapter) filter.chapter = chapter;
-  if (search.trim()) filter.title = { $regex: search.trim(), $options: 'i' };
+  if (search.trim()) filter.title = { $regex: escapeRegex(search.trim()), $options: 'i' };
 
   const topics = await Topic.find(filter).sort({ order: 1, createdAt: 1 });
   const exams = await Exam.find().select('topic').lean();
@@ -35,6 +37,9 @@ const createTopic = asyncHandler(async (req, res) => {
   if (!chapter) throw new ApiError(400, 'اختر فصلًا لهذا الموضوع');
   if (!title) throw new ApiError(400, 'عنوان الموضوع مطلوب');
 
+  const chapterDoc = await Chapter.findById(chapter);
+  if (!chapterDoc) throw new ApiError(404, 'الفصل غير موجود');
+
   const topic = await Topic.create({
     chapter,
     title,
@@ -54,7 +59,11 @@ const updateTopic = asyncHandler(async (req, res) => {
   if (description !== undefined) topic.description = description;
   if (order !== undefined) topic.order = order;
   if (isActive !== undefined) topic.isActive = isActive;
-  if (chapter !== undefined) topic.chapter = chapter;
+  if (chapter !== undefined) {
+    const chapterDoc = await Chapter.findById(chapter);
+    if (!chapterDoc) throw new ApiError(404, 'الفصل غير موجود');
+    topic.chapter = chapter;
+  }
 
   await topic.save();
   res.json({ success: true, data: topic });

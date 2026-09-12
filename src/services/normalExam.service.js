@@ -16,6 +16,11 @@ const isWithinDates = (exam) => {
 const getEffectiveActive = (exam) => !!(exam.isActive && isWithinDates(exam));
 
 const applyScheduledWindow = async (exam) => {
+  // النافذة الزمنية تحكم التفعيل للاختبارات المجدولة فقط. أما الاختبار بلا
+  // تواريخ فتفعيله قرار المسؤول وحده — وإلا فإن isWithinDates تعيد true
+  // فيُفعَّل كل اختبار جديد تلقائيًا قبل أن تُضاف أسئلته.
+  if (!exam.startsAt && !exam.endsAt) return;
+
   const desired = isWithinDates(exam);
   if (exam.isActive !== desired) {
     exam.isActive = desired;

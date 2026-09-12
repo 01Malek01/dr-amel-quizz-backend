@@ -1,0 +1,82 @@
+# منصة اختبارات د. أمل — تشغيل كامل: MongoDB + الخادم + الواجهة
+#
+#   cd backend
+#   cp .env.docker.example .env.docker      ثم عدّل القيم
+#   docker compose --env-file .env.docker up -d --build
+#
+# المنفذان مربوطان بـ 127.0.0.1 فقط، فلا يصل إليهما أحد من الإنترنت مباشرة.
+# nginx على الخادم نفسه (لا داخل حاوية) هو ما يُمرّر إليهما.
+
+# ملاحظة مهمة: متغيرات هذا الملف مسبوقة بـ DQ_ عن قصد. ملف backend/.env
+# الخاص بالتطوير يحمل أسماءً مثل JWT_SECRET، ولو استُخدمت الأسماء نفسها هنا
+# لكان `docker compose up` بدون --env-file يسحب قيم التطوير بصمت إلى الإنتاج.
+# بهذا التمييز يفشل التشغيل برسالة واضحة إن نُسي ملف البيئة.
+
+name: dr-amel-quizzes
+
+services:
+  mongo:
+    image: mongo:8
+    container_name: dq-mongo
+    restart: unless-stopped
+    # لا تُنشر قاعدة البيانات خارج شبكة compose. أزل التعليق عن السطر التالي
+    # فقط إن أردت الاتصال بها من نفس الخادم بأداة مثل mongosh أو Compass.
+    # ports:
+    #   - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  backend:
+    build:
+      context: .
+    image: dq-backend
+    container_name: dq-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      PORT: 5007
+      MONGO_URI: mongodb://mongo:27017/dr-amel-quizzes
+      # مطلوبان — سيتوقف التشغيل برسالة واضحة إن لم تُضبطا في ملف البيئة
+      JWT_SECRET: ${DQ_JWT_SECRET:?اضبط JWT_SECRET في ملف البيئة}
+      ADMIN_PASSWORD: ${DQ_ADMIN_PASSWORD:?اضبط ADMIN_PASSWORD في ملف البيئة}
+      JWT_EXPIRES_IN: ${DQ_JWT_EXPIRES_IN:-7d}
+      CLIENT_URL: ${DQ_CLIENT_URL:-http://localhost:3006}
+      ADMIN_NAME: ${DQ_ADMIN_NAME:-Dr. Amel}
+      ADMIN_EMAIL: ${DQ_ADMIN_EMAIL:-admin@dramel-quizzes.com}
+      ADMIN_USERNAME: ${DQ_ADMIN_USERNAME:-admin}
+      UPLOAD_DIR: uploads
+    ports:
+      - "127.0.0.1:${DQ_BACKEND_PORT:-5007}:5007"
+    volumes:
+      # صور الأسئلة والإجابات التي يرفعها المسؤول — يجب أن تبقى بعد إعادة البناء
+      - uploads_data:/app/uploads
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        # يُدمج في حزمة المتصفح وقت البناء. على الخادم اجعله عنوان الـ API
+        # العام كما يراه المتصفح، مثل https://example.com/api
+        NEXT_PUBLIC_API_URL: ${DQ_NEXT_PUBLIC_API_URL:-http://localhost:5007/api}
+    image: dq-frontend
+    container_name: dq-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${DQ_FRONTEND_PORT:-3006}:3006"
+
+volumes:
+  mongo_data:
+  mongo_config:
+  uploads_data:

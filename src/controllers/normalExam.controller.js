@@ -1,5 +1,6 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { escapeRegex } = require('../utils/escapeRegex');
 const NormalExam = require('../models/NormalExam');
 const NormalQuestion = require('../models/NormalQuestion');
 const NormalExamResult = require('../models/NormalExamResult');
@@ -15,7 +16,7 @@ const listNormalExams = asyncHandler(async (req, res) => {
   const { search = '', status = '' } = req.query;
 
   const filter = {};
-  if (search.trim()) filter.title = { $regex: search.trim(), $options: 'i' };
+  if (search.trim()) filter.title = { $regex: escapeRegex(search.trim()), $options: 'i' };
 
   const exams = await NormalExam.find(filter).sort({ createdAt: -1 });
 

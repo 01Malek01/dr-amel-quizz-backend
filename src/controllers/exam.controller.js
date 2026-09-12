@@ -1,5 +1,6 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { escapeRegex } = require('../utils/escapeRegex');
 const { generateExamCode } = require('../utils/code');
 const Exam = require('../models/Exam');
 const Topic = require('../models/Topic');
@@ -15,7 +16,7 @@ const listExams = asyncHandler(async (req, res) => {
   if (topic) filter.topic = topic;
   if (status === 'published') filter.isPublished = true;
   if (status === 'draft') filter.isPublished = false;
-  if (search.trim()) filter.title = { $regex: search.trim(), $options: 'i' };
+  if (search.trim()) filter.title = { $regex: escapeRegex(search.trim()), $options: 'i' };
 
   let exams = await Exam.find(filter)
     .populate({ path: 'topic', populate: { path: 'chapter' } })
