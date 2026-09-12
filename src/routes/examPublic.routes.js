@@ -4,6 +4,7 @@ const {
   start,
   submit,
   complete,
+  submitInTestSurvey,
 } = require('../controllers/examPublic.controller');
 const { protect } = require('../middleware/auth');
 
@@ -13,5 +14,6 @@ router.get('/:code', getMeta);
 router.post('/:code/start', protect, start);
 router.post('/:code/submit', protect, submit);
 router.post('/:code/complete', protect, complete);
+router.post('/:code/survey-submit', protect, submitInTestSurvey);
 
 module.exports = router;

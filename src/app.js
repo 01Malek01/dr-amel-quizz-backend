@@ -21,6 +21,7 @@ const surveyPublicRoutes = require('./routes/surveyPublic.routes');
 const feedbackRatingRoutes = require('./routes/feedbackRating.routes');
 const statsRoutes = require('./routes/stats.routes');
 const uploadRoutes = require('./routes/upload.routes');
+const settingRoutes = require('./routes/setting.routes');
 
 const { notFound, errorHandler } = require('./middleware/error');
 
@@ -59,6 +60,7 @@ app.use('/api/survey', surveyPublicRoutes);
 app.use('/api/feedback-rating', feedbackRatingRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/settings', settingRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

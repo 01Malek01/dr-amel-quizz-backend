@@ -65,7 +65,7 @@ const getExam = asyncHandler(async (req, res) => {
 });
 
 const createExam = asyncHandler(async (req, res) => {
-  const { title, description, topic, feedbackType, attemptsPerQuestion, questionTimeSeconds } = req.body;
+  const { title, description, topic, feedbackType, attemptsPerQuestion, questionTimeSeconds, showScoreHistory } = req.body;
 
   if (!title) throw new ApiError(400, 'عنوان الاختبار مطلوب');
   if (!topic) throw new ApiError(400, 'اختر موضوعًا لهذا الاختبار');
@@ -80,6 +80,7 @@ const createExam = asyncHandler(async (req, res) => {
     feedbackType: feedbackType || 'hint',
     attemptsPerQuestion: attemptsPerQuestion || 3,
     questionTimeSeconds: questionTimeSeconds !== undefined ? questionTimeSeconds : 90,
+    showScoreHistory: !!showScoreHistory,
     createdBy: req.user._id,
   });
 
@@ -90,13 +91,14 @@ const updateExam = asyncHandler(async (req, res) => {
   const exam = await Exam.findById(req.params.id);
   if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
 
-  const { title, description, topic, feedbackType, attemptsPerQuestion, questionTimeSeconds } = req.body;
+  const { title, description, topic, feedbackType, attemptsPerQuestion, questionTimeSeconds, showScoreHistory } = req.body;
   if (title !== undefined) exam.title = title;
   if (description !== undefined) exam.description = description;
   if (topic !== undefined) exam.topic = topic;
   if (feedbackType !== undefined) exam.feedbackType = feedbackType;
   if (attemptsPerQuestion !== undefined) exam.attemptsPerQuestion = attemptsPerQuestion;
   if (questionTimeSeconds !== undefined) exam.questionTimeSeconds = questionTimeSeconds;
+  if (showScoreHistory !== undefined) exam.showScoreHistory = !!showScoreHistory;
 
   await exam.save();
   res.json({ success: true, data: exam });

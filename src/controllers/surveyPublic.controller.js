@@ -38,7 +38,11 @@ const getQuestions = asyncHandler(async (req, res) => {
   }
 
   const questions = await SurveyQuestion.find({ survey: survey._id }).sort({ order: 1 });
-  const existing = await SurveyResponse.findOne({ survey: survey._id, user: req.user._id });
+  const existing = await SurveyResponse.findOne({
+    survey: survey._id,
+    user: req.user._id,
+    source: 'standalone',
+  });
 
   res.json({
     success: true,
@@ -96,6 +100,7 @@ const submit = asyncHandler(async (req, res) => {
   const response = await SurveyResponse.create({
     survey: survey._id,
     user: req.user._id,
+    source: 'standalone',
     answers: answerDocs,
     totalScore,
     questionCount: questions.length,

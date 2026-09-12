@@ -36,8 +36,8 @@ const setQuestions = asyncHandler(async (req, res) => {
       feedback: {
         hint: o.feedback?.hint || '',
         roadmap: o.feedback?.roadmap || '',
-        link: o.feedback?.link || '',
         explanation: o.feedback?.explanation || '',
+        custom: o.feedback?.custom || '',
       },
     }));
 

@@ -7,6 +7,10 @@ const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
 const Group = require('../models/Group');
 const FeedbackRating = require('../models/FeedbackRating');
+const Setting = require('../models/Setting');
+const Survey = require('../models/Survey');
+const SurveyQuestion = require('../models/SurveyQuestion');
+const SurveyResponse = require('../models/SurveyResponse');
 
 const getMeta = asyncHandler(async (req, res) => {
   const exam = await Exam.findOne({ code: req.params.code, isPublished: true }).populate({
@@ -20,6 +24,17 @@ const getMeta = asyncHandler(async (req, res) => {
 
   const questionCount = await Question.countDocuments({ exam: exam._id });
 
+  const linkedSurvey = await Survey.findOne({ exam: exam._id, isActive: true })
+    .select('code title intro choices')
+    .lean();
+
+  let surveyQuestions = [];
+  if (linkedSurvey) {
+    surveyQuestions = await SurveyQuestion.find({ survey: linkedSurvey._id })
+      .sort({ order: 1 })
+      .lean();
+  }
+
   res.json({
     success: true,
     data: {
@@ -31,7 +46,24 @@ const getMeta = asyncHandler(async (req, res) => {
       questionCount,
       attemptsPerQuestion: exam.attemptsPerQuestion,
       questionTimeSeconds: exam.questionTimeSeconds,
+      showScoreHistory: exam.showScoreHistory,
       feedbackType: exam.feedbackType,
+      instructions: await Setting.get('feedbackExamInstructions'),
+      survey:
+        linkedSurvey && surveyQuestions.length > 0 && (linkedSurvey.choices || []).length >= 2
+          ? {
+              code: linkedSurvey.code,
+              title: linkedSurvey.title,
+              intro: linkedSurvey.intro,
+              questionCount: surveyQuestions.length,
+              questions: surveyQuestions.map((q) => ({ _id: q._id, text: q.text })),
+              choices: (linkedSurvey.choices || []).map((c) => ({
+                _id: c._id,
+                label: c.label,
+                score: c.score,
+              })),
+            }
+          : null,
     },
   });
 });
@@ -66,6 +98,19 @@ const start = asyncHandler(async (req, res) => {
     exam: exam._id,
   }).select('question');
 
+  const activeSurvey = await Survey.findOne({ exam: exam._id, isActive: true }).select('_id').lean();
+  let surveyedQuestions = [];
+  if (activeSurvey) {
+    const surveyResponses = await SurveyResponse.find({
+      survey: activeSurvey._id,
+      session: session._id,
+      source: 'in-test',
+    }).select('questionOrder -_id');
+    surveyedQuestions = surveyResponses
+      .map((r) => r.questionOrder)
+      .filter((o) => o !== null && o !== undefined);
+  }
+
   const sanitized = questions.map((q) => ({
     _id: q._id,
     order: q.order,
@@ -88,9 +133,11 @@ const start = asyncHandler(async (req, res) => {
       examDescription: exam.description,
       attemptsPerQuestion: exam.attemptsPerQuestion,
       questionTimeSeconds: exam.questionTimeSeconds,
+      showScoreHistory: exam.showScoreHistory,
       questionCount: sanitized.length,
       questions: sanitized,
       ratedQuestions: ratings.map((r) => r.question),
+      surveyedQuestions,
     },
   });
 });
@@ -243,11 +290,42 @@ const complete = asyncHandler(async (req, res) => {
     }
   }
 
+  let history = null;
+  if (exam.showScoreHistory) {
+    const pastSessions = await Session.find({ user: req.user._id, status: 'completed' })
+      .populate({ path: 'exam', select: 'title' })
+      .sort({ completedAt: -1 });
+    const examIds = pastSessions.map((s) => s.exam?._id).filter(Boolean);
+    const counts = await Question.aggregate([
+      { $match: { exam: { $in: examIds } } },
+      { $group: { _id: '$exam', count: { $sum: 1 } } },
+    ]);
+    const countMap = Object.fromEntries(counts.map((c) => [String(c._id), c.count]));
+    history = pastSessions.map((s) => {
+      const qCount = countMap[String(s.exam?._id)] || 0;
+      return {
+        sessionId: s._id,
+        examId: s.exam?._id,
+        examTitle: s.exam?.title || 'اختبار محذوف',
+        questionCount: qCount,
+        correctCount: s.correctCount,
+        wrongCount: s.wrongCount,
+        skippedCount: s.skippedCount || 0,
+        timeSeconds: s.totalTimeSeconds || 0,
+        stars: s.stars,
+        badges: s.badges || 0,
+        completedAt: s.completedAt,
+      };
+    });
+  }
+
   res.json({
     success: true,
     data: {
       sessionId: session._id,
       examTitle: exam.title,
+      showScoreHistory: exam.showScoreHistory,
+      history,
       questionCount,
       correctCount: session.correctCount,
       wrongAttempts: session.wrongCount,
@@ -259,4 +337,82 @@ const complete = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { getMeta, start, submit, complete };
+const submitInTestSurvey = asyncHandler(async (req, res) => {
+  const { code } = req.params;
+  const { questionId, questionOrder, answers } = req.body;
+
+  const exam = await Exam.findOne({ code, isPublished: true });
+  if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
+
+  const session = await Session.findOne({
+    user: req.user._id,
+    exam: exam._id,
+    status: 'in-progress',
+  });
+  if (!session) throw new ApiError(400, 'لا يوجد اختبار نشط');
+
+  const survey = await Survey.findOne({ exam: exam._id, isActive: true });
+  if (!survey) throw new ApiError(404, 'لا يوجد مقياس نشط لهذا الاختبار');
+
+  const existing = await SurveyResponse.findOne({
+    survey: survey._id,
+    session: session._id,
+    questionOrder,
+  });
+  if (existing) {
+    return res.json({ success: true, data: { alreadySubmitted: true } });
+  }
+
+  const surveyQuestions = await SurveyQuestion.find({ survey: survey._id }).sort({ order: 1 });
+  if (surveyQuestions.length === 0) throw new ApiError(400, 'لا توجد بنود في المقياس');
+
+  const cleanAnswers = Array.isArray(answers) ? answers : [];
+  if (cleanAnswers.length !== surveyQuestions.length) {
+    throw new ApiError(400, 'يجب الإجابة على جميع بنود المقياس');
+  }
+
+  const choicesMap = new Map(survey.choices.map((c) => [String(c._id), c]));
+  let totalScore = 0;
+  const answerDocs = [];
+
+  for (const q of surveyQuestions) {
+    const chosen = cleanAnswers.find(
+      (a) => a && a.questionId && String(a.questionId) === String(q._id)
+    );
+    if (!chosen || !chosen.choiceId) {
+      throw new ApiError(400, 'أجب على جميع بنود المقياس قبل التسليم');
+    }
+    const choice = choicesMap.get(String(chosen.choiceId));
+    if (!choice) throw new ApiError(400, 'اختيار غير صحيح في أحد بنود المقياس');
+
+    totalScore += choice.score;
+    answerDocs.push({
+      question: q._id,
+      choiceLabel: choice.label,
+      score: choice.score,
+    });
+  }
+
+  const questionCount = surveyQuestions.length;
+  const result = questionCount ? Math.round((totalScore / questionCount) * 100) / 100 : 0;
+
+  await SurveyResponse.create({
+    survey: survey._id,
+    user: req.user._id,
+    session: session._id,
+    questionOrder,
+    source: 'in-test',
+    answers: answerDocs,
+    totalScore,
+    questionCount,
+    result,
+    submittedAt: new Date(),
+  });
+
+  res.status(201).json({
+    success: true,
+    data: { totalScore, questionCount, result },
+  });
+});
+
+module.exports = { getMeta, start, submit, complete, submitInTestSurvey };

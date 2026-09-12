@@ -27,6 +27,20 @@ const surveyResponseSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    session: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Session',
+      default: null,
+    },
+    questionOrder: {
+      type: Number,
+      default: null,
+    },
+    source: {
+      type: String,
+      enum: ['standalone', 'in-test'],
+      default: 'standalone',
+    },
     answers: { type: [answerSchema], default: [] },
     totalScore: { type: Number, default: 0 },
     questionCount: { type: Number, default: 0 },
@@ -37,5 +51,6 @@ const surveyResponseSchema = new mongoose.Schema(
 );
 
 surveyResponseSchema.index({ survey: 1, user: 1 });
+surveyResponseSchema.index({ survey: 1, session: 1, questionOrder: 1 });
 
 module.exports = mongoose.model('SurveyResponse', surveyResponseSchema);

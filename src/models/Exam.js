@@ -22,6 +22,7 @@ const examSchema = new mongoose.Schema(
     },
     attemptsPerQuestion: { type: Number, default: 3, min: 1, max: 10 },
     questionTimeSeconds: { type: Number, default: 90, min: 0 },
+    showScoreHistory: { type: Boolean, default: false },
     isPublished: { type: Boolean, default: false },
     code: { type: String, unique: true, sparse: true },
     publishedAt: { type: Date, default: null },

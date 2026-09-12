@@ -14,8 +14,8 @@ const optionSchema = new mongoose.Schema(
     feedback: {
       hint: { type: String, default: '' },
       roadmap: { type: String, default: '' },
-      link: { type: String, default: '' },
       explanation: { type: String, default: '' },
+      custom: { type: String, default: '' },
     },
   },
   { _id: true }

@@ -35,6 +35,7 @@ const surveySchema = new mongoose.Schema(
       },
     },
     isActive: { type: Boolean, default: false },
+    isPredefined: { type: Boolean, default: false },
     code: { type: String, unique: true, sparse: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   },
