@@ -65,75 +65,85 @@ const getSurvey = asyncHandler(async (req, res) => {
   });
 });
 
-const createSurvey = asyncHandler(async (req, res) => {
-  const { title, intro, exam, choices, predefined } = req.body;
+// المقياس ثابت: العنوان والتعليمات والبنود الثمانية والاختيارات ودرجاتها
+// محددة مسبقًا في PREBUILT_SURVEY. المسؤول يختار الاختبار المرتبط فقط.
+const assertExamHasNoSurvey = async (examId, excludeSurveyId = null) => {
+  const query = { exam: examId };
+  if (excludeSurveyId) query._id = { $ne: excludeSurveyId };
+  const existing = await Survey.findOne(query).select('_id');
+  if (existing) {
+    // مقياس واحد لكل اختبار: المقياس بين الأسئلة ونتائجه يُقرآن بـ findOne
+    // على الاختبار، فوجود مقياسين يقسم النتائج بينهما بلا تحديد.
+    throw new ApiError(409, 'يوجد رابط مقياس لهذا الاختبار بالفعل — افتحه من قائمة المقاييس');
+  }
+};
 
-  if (!title) throw new ApiError(400, 'عنوان المقياس مطلوب');
+const getTemplate = asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      title: PREBUILT_SURVEY.title,
+      intro: PREBUILT_SURVEY.intro,
+      choices: PREBUILT_SURVEY.choices,
+      items: PREBUILT_SURVEY.items,
+    },
+  });
+});
+
+const createSurvey = asyncHandler(async (req, res) => {
+  const { exam } = req.body;
   if (!exam) throw new ApiError(400, 'اختر الاختبار المرتبط بهذا المقياس');
 
   const examDoc = await Exam.findById(exam);
   if (!examDoc) throw new ApiError(404, 'الاختبار غير موجود');
 
-  const usePredefined = !!predefined;
-  const cleanChoices = usePredefined
-    ? PREBUILT_SURVEY.choices.map((c) => ({ label: c.label, score: c.score }))
-    : (Array.isArray(choices) ? choices : []).map((c) => ({
-        label: String(c.label || '').trim(),
-        score: Number(c.score) || 0,
-      }));
-  if (!usePredefined && cleanChoices.length < 2) {
-    throw new ApiError(400, 'أضف اختيارين على الأقل مع درجاتها');
-  }
+  await assertExamHasNoSurvey(examDoc._id);
 
   let survey = await Survey.create({
-    title,
-    intro: intro && intro.trim() ? intro : usePredefined ? PREBUILT_SURVEY.intro : '',
-    exam,
-    choices: cleanChoices,
-    isPredefined: usePredefined,
-    isActive: usePredefined,
+    title: PREBUILT_SURVEY.title,
+    intro: PREBUILT_SURVEY.intro,
+    exam: examDoc._id,
+    choices: PREBUILT_SURVEY.choices.map((c) => ({ label: c.label, score: c.score })),
+    isPredefined: true,
+    isActive: true,
     createdBy: req.user._id,
   });
 
   survey = await ensureCode(survey);
   await survey.save();
 
-  if (usePredefined) {
-    await saveQuestions(survey._id, PREBUILT_SURVEY.items.map((text) => ({ _id: null, text })));
-  }
+  await saveQuestions(survey._id, PREBUILT_SURVEY.items.map((text) => ({ _id: null, text })));
 
   const questionCount = await questionCountFor(survey._id);
-  res.status(201).json({ success: true, data: { ...survey.toObject(), questionCount } });
+  res.status(201).json({
+    success: true,
+    data: {
+      ...survey.toObject(),
+      questionCount,
+      examTitle: examDoc.title,
+      link: `/survey/${survey.code}`,
+    },
+  });
 });
 
+// التعديل الوحيد المسموح: تغيير الاختبار المرتبط
 const updateSurvey = asyncHandler(async (req, res) => {
-  const survey = await Survey.findById(req.params.id);
+  let survey = await Survey.findById(req.params.id);
   if (!survey) throw new ApiError(404, 'المقياس غير موجود');
 
-  const { title, intro, exam, choices } = req.body;
+  const { exam } = req.body;
+  if (!exam) throw new ApiError(400, 'اختر الاختبار المرتبط بهذا المقياس');
 
-  if (title !== undefined) survey.title = String(title).trim();
-  if (intro !== undefined) survey.intro = intro;
-  if (exam !== undefined) {
-    const examDoc = await Exam.findById(exam);
-    if (!examDoc) throw new ApiError(404, 'الاختبار غير موجود');
-    survey.exam = exam;
-  }
-  if (choices !== undefined) {
-    const cleanChoices = (Array.isArray(choices) ? choices : []).map((c) => ({
-      label: String(c.label || '').trim(),
-      score: Number(c.score) || 0,
-    }));
-    if (cleanChoices.length < 2) {
-      throw new ApiError(400, 'أضف اختيارين على الأقل مع درجاتها');
-    }
-    survey.choices = cleanChoices;
-  }
+  const examDoc = await Exam.findById(exam);
+  if (!examDoc) throw new ApiError(404, 'الاختبار غير موجود');
 
+  await assertExamHasNoSurvey(examDoc._id, survey._id);
+
+  survey.exam = examDoc._id;
   survey = await ensureCode(survey);
   await survey.save();
 
-  res.json({ success: true, data: survey });
+  res.json({ success: true, data: { ...survey.toObject(), examTitle: examDoc.title } });
 });
 
 const setActive = asyncHandler(async (req, res) => {
@@ -157,16 +167,6 @@ const deleteSurvey = asyncHandler(async (req, res) => {
 
   res.json({ success: true, message: 'تم حذف المقياس ونتائجه' });
 });
-
-const setQuestions = asyncHandler(async (req, res) => {
-  const survey = await Survey.findById(req.params.id);
-  if (!survey) throw new ApiError(404, 'المقياس غير موجود');
-
-  const questions = Array.isArray(req.body.questions) ? req.body.questions : [];
-  const saved = await saveQuestions(survey._id, questions);
-  res.json({ success: true, data: saved });
-});
-
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -304,10 +304,10 @@ const getResults = asyncHandler(async (req, res) => {
 module.exports = {
   listSurveys,
   getSurvey,
+  getTemplate,
   createSurvey,
   updateSurvey,
   setActive,
   deleteSurvey,
-  setQuestions,
   getResults,
 };
