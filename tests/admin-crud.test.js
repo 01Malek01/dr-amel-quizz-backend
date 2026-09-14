@@ -261,16 +261,6 @@ describe('الإحصائيات لا ترمي استثناءات على بيان�
     });
   }
 
-  test('in-test-survey بلا معامل exam يرفض بـ400', async () => {
-    const res = await asAdmin('/stats/in-test-survey');
-    assert.equal(res.status, 400);
-  });
-
-  test('in-test-survey باختبار غير موجود يعيد 404', async () => {
-    const res = await asAdmin(`/stats/in-test-survey?exam=${MISSING_ID}`);
-    assert.equal(res.status, 404);
-  });
-
   test('feedback-ratings بمعرّف طالب غير صالح لا يعطي 500', async () => {
     const res = await asAdmin(`/stats/feedback-ratings?student=${BAD_ID}`);
     assert.ok(res.status < 500, `-> ${res.status} ${res.body.message}`);

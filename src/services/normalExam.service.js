@@ -130,9 +130,44 @@ const saveQuestions = async (examId, questions) => {
   return NormalQuestion.find({ exam: examId }).sort({ order: 1 });
 };
 
+const fmtArDate = (d) =>
+  new Date(d).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' });
+
+// يرفض التواريخ غير الصالحة ووقت نهاية لا يأتي بعد وقت البداية
+const assertValidWindow = (startsAt, endsAt) => {
+  const start = startsAt ? new Date(startsAt) : null;
+  const end = endsAt ? new Date(endsAt) : null;
+  if (start && Number.isNaN(start.getTime())) throw new ApiError(400, 'وقت البداية غير صالح');
+  if (end && Number.isNaN(end.getTime())) throw new ApiError(400, 'وقت النهاية غير صالح');
+  if (start && end && end.getTime() <= start.getTime()) {
+    throw new ApiError(400, 'وقت النهاية يجب أن يكون بعد وقت البداية');
+  }
+};
+
+// الاختبار المجدول يتحكم جدوله في تفعيله: تفعيله خارج نافذته يُلغى تلقائيًا
+// خلال دقيقة، لذا نرفضه برسالة توضّح السبب بدل أن يختفي التفعيل بصمت.
+const assertCanActivate = (exam) => {
+  if (!exam.startsAt && !exam.endsAt) return;
+  const now = Date.now();
+  if (exam.endsAt && now > new Date(exam.endsAt).getTime()) {
+    throw new ApiError(
+      400,
+      `لا يمكن تفعيل الاختبار: انتهى وقت نهايته (${fmtArDate(exam.endsAt)}). عدّل وقت النهاية أو امسحه ثم احفظ الإعدادات.`
+    );
+  }
+  if (exam.startsAt && now < new Date(exam.startsAt).getTime()) {
+    throw new ApiError(
+      400,
+      `سيُفعَّل الاختبار تلقائيًا عند وقت بدايته (${fmtArDate(exam.startsAt)}). لتفعيله الآن امسح وقت البداية أو قدّمه ثم احفظ الإعدادات.`
+    );
+  }
+};
+
 module.exports = {
   RETAKE_COOLDOWN_MS,
   isWithinDates,
+  assertValidWindow,
+  assertCanActivate,
   getEffectiveActive,
   applyScheduledWindow,
   startScheduledWindowWatcher,

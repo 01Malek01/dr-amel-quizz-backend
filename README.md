@@ -105,9 +105,9 @@ node --test --test-name-pattern="الكأس" "tests/*.test.js"   # tests matchin
 | File | Area |
 | ---- | ---- |
 | `tests/auth-authz.test.js` | login, `/me`, role enforcement on every admin route, bad tokens, invalid ids, malformed bodies |
-| `tests/student-feedback-exam.test.js` | the full student run: start, retries, feedback style resolution, first-try badge, perceived-usefulness gate, completion, in-test survey |
+| `tests/student-feedback-exam.test.js` | the full student run: start, retries, feedback style resolution, first-try badge, perceived-usefulness gate, completion |
 | `tests/admin-crud.test.js` | students, groups, modules, topics, exams, questions, publishing, settings, all stats endpoints |
-| `tests/surveys.test.js` | scale CRUD, items, activation, link submissions, and that link results stay separate from in-test results |
+| `tests/surveys.test.js` | creating a link from the predefined scale, one link per exam, activation, link submissions and results |
 | `tests/normal-exams.test.js` | normal exam CRUD, student submission and grading, scheduling window |
 
 `tests/helpers.js` holds the shared harness (boot/shutdown, HTTP client, fixtures).

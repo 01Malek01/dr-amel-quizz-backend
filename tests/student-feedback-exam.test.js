@@ -3,9 +3,6 @@ const assert = require('node:assert/strict');
 
 const { boot, shutdown, client, makeUsers, makeFeedbackExam, MISSING_ID } = require('./helpers');
 const Session = require('../src/models/Session');
-const Survey = require('../src/models/Survey');
-const SurveyQuestion = require('../src/models/SurveyQuestion');
-const SurveyResponse = require('../src/models/SurveyResponse');
 
 let request;
 let users;
@@ -228,84 +225,27 @@ describe('مقياس الفائدة المدركة', () => {
   });
 });
 
-describe('المقياس داخل الاختبار', () => {
-  test('بدون مقياس نشط يرفض بـ404', async () => {
+describe('لا يوجد مقياس الانفعالات بين الأسئلة', () => {
+  test('بيانات الاختبار لا تحمل مقياسًا حتى لو كان له رابط مقياس', async () => {
+    const other = await makeFeedbackExam({ questionCount: 1, code: 'NOSURV1' });
+    const created = await request('/surveys', {
+      method: 'POST',
+      token: users.adminToken,
+      body: { exam: String(other.exam._id) },
+    });
+    assert.equal(created.status, 201, created.body.message);
+
+    const meta = await request('/exam/NOSURV1');
+    assert.equal(meta.status, 200);
+    assert.equal(meta.body.data.survey, undefined);
+  });
+
+  test('مسار تسليم المقياس داخل الاختبار غير موجود', async () => {
     const res = await request('/exam/TESTEX1/survey-submit', {
       method: 'POST',
       token: users.studentToken,
       body: { questionOrder: 0, answers: [] },
     });
-    assert.ok(res.status === 404 || res.status === 400, `-> ${res.status}`);
-  });
-
-  test('اختبار منفصل: يُسجَّل مرة واحدة لكل سؤال', async () => {
-    const second = await makeFeedbackExam({ questionCount: 2, code: 'TESTEX2' });
-    const survey = await Survey.create({
-      title: 'مقياس داخل الاختبار',
-      exam: second.exam._id,
-      code: 'TESTSV1',
-      isActive: true,
-      choices: [
-        { label: 'موافق', score: 5 },
-        { label: 'محايد', score: 3 },
-        { label: 'غير موافق', score: 1 },
-      ],
-    });
-    const items = [
-      await SurveyQuestion.create({ survey: survey._id, order: 0, text: 'بند أول' }),
-      await SurveyQuestion.create({ survey: survey._id, order: 1, text: 'بند ثانٍ' }),
-    ];
-
-    await request('/exam/TESTEX2/start', { method: 'POST', token: users.studentToken });
-
-    const answers = items.map((it) => ({
-      questionId: String(it._id),
-      choiceId: String(survey.choices[0]._id),
-    }));
-
-    const first = await request('/exam/TESTEX2/survey-submit', {
-      method: 'POST',
-      token: users.studentToken,
-      body: { questionOrder: 0, answers },
-    });
-    assert.equal(first.status, 201, first.body.message);
-    assert.equal(first.body.data.result, 5);
-
-    const again = await request('/exam/TESTEX2/survey-submit', {
-      method: 'POST',
-      token: users.studentToken,
-      body: { questionOrder: 0, answers },
-    });
-    assert.equal(again.status, 200);
-    assert.equal(again.body.data.alreadySubmitted, true);
-
-    const stored = await SurveyResponse.countDocuments({
-      survey: survey._id,
-      source: 'in-test',
-    });
-    assert.equal(stored, 1, 'لا يجب تكرار التسجيل لنفس السؤال');
-  });
-
-  test('إجابات ناقصة أو خيارات غير موجودة ترفض بـ400', async () => {
-    const survey = await Survey.findOne({ code: 'TESTSV1' });
-    const items = await SurveyQuestion.find({ survey: survey._id }).sort({ order: 1 });
-    const bodies = [
-      { questionOrder: 1, answers: [] },
-      { questionOrder: 1, answers: [{ questionId: String(items[0]._id), choiceId: MISSING_ID }] },
-      {
-        questionOrder: 1,
-        answers: items.map((it) => ({ questionId: String(it._id), choiceId: MISSING_ID })),
-      },
-      { questionOrder: 1, answers: 'nope' },
-      { questionOrder: 1 },
-    ];
-    for (const body of bodies) {
-      const res = await request('/exam/TESTEX2/survey-submit', {
-        method: 'POST',
-        token: users.studentToken,
-        body,
-      });
-      assert.ok(res.status < 500, `${JSON.stringify(body)} -> ${res.status} ${res.body.message}`);
-    }
+    assert.equal(res.status, 404);
   });
 });

@@ -154,9 +154,9 @@ const seed = async () => {
   const groups = [];
   for (const g of GROUPS) groups.push(await Group.create({ ...g, isActive: true }));
 
-  // المقياس الذي يظهر للطالب بين أسئلة الاختبار (مفعّل ومرتبط بهذا الاختبار)
+  // رابط مقياس الانفعالات المرتبط بهذا الاختبار
   const survey = await Survey.create({
-    title: 'مقياس الانفعالات المرتبطة بأداء الاختبار (محاكاة)',
+    title: `${PREBUILT_SURVEY.title} (محاكاة)`,
     intro: PREBUILT_SURVEY.intro,
     exam: exam._id,
     code: SIM_SURVEY_CODE,
@@ -264,27 +264,6 @@ const seed = async () => {
         score: Math.round(((items[0] + items[1] + items[2]) / 3) * 100) / 100,
       });
 
-      // المقياس بين الأسئلة: يُسجَّل بعد حسم كل سؤال قبل الانتقال للذي يليه.
-      // الانفعال يتحسّن قليلًا مع الإجابة الصحيحة ويتراجع عند نفاد المحاولات.
-      const moodHere = p.mood + (willBeCorrect ? (onFirstTry ? 1 : 0) : -1);
-      const answerDocs = surveyItems.map((item, idx) => {
-        const wobble = ((i + idx) % 3) - 1;
-        const choice = pickChoice(moodHere + wobble);
-        return { question: item._id, choiceLabel: choice.label, score: choice.score };
-      });
-      const inTestTotal = answerDocs.reduce((sum, a) => sum + a.score, 0);
-      await SurveyResponse.create({
-        survey: survey._id,
-        user: user._id,
-        session: session._id,
-        questionOrder: i,
-        source: 'in-test',
-        answers: answerDocs,
-        totalScore: inTestTotal,
-        questionCount: answerDocs.length,
-        result: Math.round((inTestTotal / answerDocs.length) * 100) / 100,
-        submittedAt: completedAt,
-      });
     }
 
     session.set({
@@ -297,7 +276,7 @@ const seed = async () => {
     });
     await session.save();
 
-    // تسليم عبر الرابط المستقل لبعض الطلاب فقط — لإظهار أن نتائجه منفصلة
+    // إجابات بعض الطلاب على رابط المقياس
     if (['noura', 'fahad', 'majed'].includes(p.u)) {
       const standaloneAnswers = surveyItems.map((item, idx) => {
         const choice = pickChoice(p.mood + (idx % 2 === 0 ? 0 : -1));
@@ -344,13 +323,11 @@ const seed = async () => {
   const { exam, survey, summary } = await seed();
   console.log(`\n${exam.title} — الرمز ${exam.code}`);
   summary.forEach((line) => console.log('  ' + line));
-  const inTest = await SurveyResponse.countDocuments({ survey: survey._id, source: 'in-test' });
   const viaLink = await SurveyResponse.countDocuments({ survey: survey._id, source: 'standalone' });
   console.log(`\nالمقياس المرتبط: ${survey.title} — الرمز ${survey.code}`);
-  console.log(`  داخل الاختبار: ${inTest} تسليمًا  ·  عبر الرابط المستقل: ${viaLink}`);
+  console.log(`  إجابات على الرابط: ${viaLink}`);
   console.log('\nأين تُعرض:');
   console.log('  الدرجات والكؤوس والشارات: الإحصائيات ← اختر اختبار المحاكاة');
-  console.log('  المقياس بين الأسئلة: كل الاختبارات ← افتح الاختبار ← تبويب نتائج المقاييس أثناء الاختبار');
   console.log('  المقياس عبر الرابط: المقاييس القبلية ← إدارة ← تبويب النتائج');
   console.log('\nللحذف: node src/scripts/simulateResults.js --clean');
 

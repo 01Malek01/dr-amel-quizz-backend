@@ -8,6 +8,8 @@ const {
   getEffectiveActive,
   ensureCode,
   applyScheduledWindow,
+  assertValidWindow,
+  assertCanActivate,
   questionCountFor,
   saveQuestions,
 } = require('../services/normalExam.service');
@@ -65,6 +67,7 @@ const createNormalExam = asyncHandler(async (req, res) => {
   if (!title) throw new ApiError(400, 'عنوان الاختبار مطلوب');
   const grade = Number(totalGrade);
   if (!grade || grade <= 0) throw new ApiError(400, 'أدخل درجة الاختبار الكلية (مثال: 100)');
+  assertValidWindow(startsAt, endsAt);
 
   let exam = await NormalExam.create({
     title,
@@ -83,7 +86,7 @@ const createNormalExam = asyncHandler(async (req, res) => {
 });
 
 const updateNormalExam = asyncHandler(async (req, res) => {
-  const exam = await NormalExam.findById(req.params.id);
+  let exam = await NormalExam.findById(req.params.id);
   if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
 
   const { title, description, totalGrade, startsAt, endsAt } = req.body;
@@ -97,6 +100,7 @@ const updateNormalExam = asyncHandler(async (req, res) => {
   }
   if (startsAt !== undefined) exam.startsAt = startsAt || null;
   if (endsAt !== undefined) exam.endsAt = endsAt || null;
+  assertValidWindow(exam.startsAt, exam.endsAt);
 
   exam = await ensureCode(exam);
   await exam.save();
@@ -110,6 +114,7 @@ const setActive = asyncHandler(async (req, res) => {
   if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
 
   const { active } = req.body;
+  if (active) assertCanActivate(exam);
   exam.isActive = !!active;
   await exam.save();
 

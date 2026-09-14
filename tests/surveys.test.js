@@ -226,43 +226,17 @@ describe('المقياس عبر الرابط المستقل', () => {
   });
 });
 
-describe('نتائج الرابط منفصلة عن نتائج داخل الاختبار', () => {
-  before(async () => {
-    await request('/exam/SVEXAM1/start', { method: 'POST', token: users.studentToken });
-    const res = await request('/exam/SVEXAM1/survey-submit', {
-      method: 'POST',
-      token: users.studentToken,
-      body: {
-        questionOrder: 0,
-        answers: itemIds.map((id) => ({ questionId: id, choiceId: choiceIdForScore(1) })),
-      },
-    });
-    assert.equal(res.status, 201, res.body.message);
-  });
-
-  test('صفحة المقاييس القبلية تعرض تسليم الرابط فقط', async () => {
+describe('نتائج الرابط', () => {
+  test('صفحة المقاييس القبلية تعرض إجابة الرابط', async () => {
     const res = await asAdmin(`/surveys/${surveyId}/results`);
     assert.equal(res.status, 200);
-    assert.equal(res.body.data.source, 'standalone');
     assert.equal(res.body.data.results.length, 1);
-    assert.equal(
-      res.body.data.results.some((r) => r.source === 'in-test'),
-      false
-    );
     assert.equal(res.body.data.summary.totalScore, 40);
     assert.equal(res.body.data.summary.itemCount, 8);
     assert.equal(res.body.data.summary.finalResult, 5);
   });
 
-  test('نتائج داخل الاختبار تُعرض في مسار الإحصائيات', async () => {
-    const res = await asAdmin(`/stats/in-test-survey?exam=${fixture.exam._id}`);
-    assert.equal(res.status, 200);
-    assert.equal(res.body.data.responseCount, 1);
-    assert.equal(res.body.data.survey.itemCount, 8);
-    assert.equal(res.body.data.overallAvg, 1);
-  });
-
-  test('التسليم داخل الاختبار لا يمنع التسليم عبر الرابط لطالب آخر', async () => {
+  test('طالب آخر يجيب على الرابط نفسه', async () => {
     const fresh = await asAdmin('/users', {
       method: 'POST',
       body: { name: 'طالب ثانٍ', username: 'stu2', password: 'pass1234', role: 'student' },
@@ -275,23 +249,12 @@ describe('نتائج الرابط منفصلة عن نتائج داخل الاخ
     });
     assert.equal(login.status, 200);
 
-    await request('/exam/SVEXAM1/start', { method: 'POST', token: login.body.token });
-    const inTest = await request('/exam/SVEXAM1/survey-submit', {
-      method: 'POST',
-      token: login.body.token,
-      body: {
-        questionOrder: 0,
-        answers: itemIds.map((id) => ({ questionId: id, choiceId: choiceIdForScore(4) })),
-      },
-    });
-    assert.equal(inTest.status, 201, inTest.body.message);
-
     const viaLink = await request(`/survey/${surveyCode}/submit`, {
       method: 'POST',
       token: login.body.token,
       body: { answers: itemIds.map((id) => ({ questionId: id, choiceId: choiceIdForScore(4) })) },
     });
-    assert.equal(viaLink.status, 201, 'التسليم داخل الاختبار لا يجب أن يحجب الرابط');
+    assert.equal(viaLink.status, 201, viaLink.body.message);
   });
 
   test('تصفية النتائج باسم الطالب لا تسبب 500', async () => {

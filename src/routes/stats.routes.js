@@ -7,7 +7,6 @@ const {
   examDetail,
   perStudentExam,
   feedbackRatings,
-  inTestSurvey,
 } = require('../controllers/stats.controller');
 const { protect, adminOnly } = require('../middleware/auth');
 
@@ -22,6 +21,5 @@ router.get('/exams/:id', examDetail);
 router.get('/students', studentsStats);
 router.get('/per-student-exam', perStudentExam);
 router.get('/feedback-ratings', feedbackRatings);
-router.get('/in-test-survey', inTestSurvey);
 
 module.exports = router;

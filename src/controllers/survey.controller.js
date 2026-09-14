@@ -72,8 +72,7 @@ const assertExamHasNoSurvey = async (examId, excludeSurveyId = null) => {
   if (excludeSurveyId) query._id = { $ne: excludeSurveyId };
   const existing = await Survey.findOne(query).select('_id');
   if (existing) {
-    // مقياس واحد لكل اختبار: المقياس بين الأسئلة ونتائجه يُقرآن بـ findOne
-    // على الاختبار، فوجود مقياسين يقسم النتائج بينهما بلا تحديد.
+    // رابط مقياس واحد لكل اختبار، حتى تُجمع نتائج طلاب الاختبار في مكان واحد.
     throw new ApiError(409, 'يوجد رابط مقياس لهذا الاختبار بالفعل — افتحه من قائمة المقاييس');
   }
 };
@@ -174,9 +173,7 @@ const getResults = asyncHandler(async (req, res) => {
   const survey = await Survey.findById(req.params.id).populate('exam', 'title');
   if (!survey) throw new ApiError(404, 'المقياس غير موجود');
 
-  // نتائج هذه الصفحة للمقياس المُشارَك عبر رابط مستقل فقط.
-  // المقياس الذي يظهر بين أسئلة الاختبار له صفحته الخاصة داخل إدارة الاختبار
-  // (GET /api/stats/in-test-survey).
+  // نتائج المقياس المُشارَك عبر الرابط.
   const { student = '', group = '', source = 'standalone' } = req.query;
 
   const match = { survey: survey._id };

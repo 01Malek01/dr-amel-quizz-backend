@@ -8,9 +8,6 @@ const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
 const FeedbackRating = require('../models/FeedbackRating');
-const Survey = require('../models/Survey');
-const SurveyQuestion = require('../models/SurveyQuestion');
-const SurveyResponse = require('../models/SurveyResponse');
 
 const overview = asyncHandler(async (req, res) => {
   const [students, groups, exams, publishedExams, sessions, completedSessions, attempts] =
@@ -435,145 +432,6 @@ const feedbackRatings = asyncHandler(async (req, res) => {
   });
 });
 
-const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-
-/**
- * نتائج المقياس الذي يُعرض للطالب بين أسئلة اختبار التغذية الرجعية.
- * منفصل تمامًا عن المقياس الذي يُشارك عبر رابط مستقل (source: 'standalone').
- */
-const inTestSurvey = asyncHandler(async (req, res) => {
-  const { exam = '', group = '' } = req.query;
-  if (!exam) throw new ApiError(400, 'حدد الاختبار');
-
-  const examDoc = await Exam.findById(exam).select('title');
-  if (!examDoc) throw new ApiError(404, 'الاختبار غير موجود');
-
-  const empty = {
-    survey: null,
-    questions: [],
-    students: [],
-    avgPerQuestion: [],
-    overallAvg: 0,
-    responseCount: 0,
-  };
-
-  const survey = await Survey.findOne({ exam: examDoc._id }).sort({ createdAt: -1 });
-  if (!survey) return res.json({ success: true, data: empty });
-
-  const items = await SurveyQuestion.find({ survey: survey._id }).sort({ order: 1 }).select('_id');
-  const scores = (survey.choices || []).map((c) => Number(c.score) || 0);
-
-  const surveyInfo = {
-    _id: survey._id,
-    title: survey.title,
-    isActive: survey.isActive,
-    itemCount: items.length,
-    min: scores.length ? Math.min(...scores) : 1,
-    max: scores.length ? Math.max(...scores) : 5,
-    link: survey.code ? `/survey/${survey.code}` : null,
-  };
-
-  const questions = (await Question.find({ exam: examDoc._id }).sort({ order: 1 }).select('text order'))
-    .map((q) => ({ questionId: q._id, order: q.order, text: q.text }));
-
-  const match = { survey: survey._id, source: 'in-test' };
-  if (group) {
-    const members = await User.find({ group }).select('_id');
-    match.user = { $in: members.map((m) => m._id) };
-  }
-
-  const responses = await SurveyResponse.find(match)
-    .populate({ path: 'user', populate: { path: 'group' } })
-    .sort({ submittedAt: 1 });
-
-  if (responses.length === 0) {
-    return res.json({ success: true, data: { ...empty, survey: surveyInfo, questions } });
-  }
-
-  // صف لكل طالب، وعمود لكل سؤال في الاختبار (يُطابق ترتيب الأسئلة عبر questionOrder)
-  const byStudent = new Map();
-  for (const r of responses) {
-    const studentId = String(r.user?._id || 'deleted');
-    const entry = byStudent.get(studentId) || {
-      studentId,
-      studentName: r.user?.name || 'محذوف',
-      username: r.user?.username || '',
-      group: r.user?.group?.name || null,
-      perOrder: new Map(),
-      totalScore: 0,
-      itemCount: 0,
-      responseCount: 0,
-    };
-    const order = Number(r.questionOrder);
-    entry.perOrder.set(order, {
-      totalScore: r.totalScore,
-      itemCount: r.questionCount,
-      result: round2(r.result),
-      submittedAt: r.submittedAt,
-    });
-    entry.totalScore += Number(r.totalScore) || 0;
-    entry.itemCount += Number(r.questionCount) || 0;
-    entry.responseCount += 1;
-    byStudent.set(studentId, entry);
-  }
-
-  const students = [...byStudent.values()]
-    .map((entry) => ({
-      studentId: entry.studentId,
-      studentName: entry.studentName,
-      username: entry.username,
-      group: entry.group,
-      responseCount: entry.responseCount,
-      totalScore: entry.totalScore,
-      itemCount: entry.itemCount,
-      // النتيجة النهائية = مجموع الدرجات ÷ عدد البنود المُجاب عنها
-      result: entry.itemCount ? round2(entry.totalScore / entry.itemCount) : 0,
-      perQuestion: questions.map((q) => {
-        const cell = entry.perOrder.get(q.order);
-        return {
-          questionId: q.questionId,
-          order: q.order,
-          totalScore: cell ? cell.totalScore : null,
-          itemCount: cell ? cell.itemCount : null,
-          result: cell ? cell.result : null,
-        };
-      }),
-    }))
-    .sort((a, b) => b.result - a.result);
-
-  const avgPerQuestion = questions.map((q) => {
-    const cells = students
-      .map((s) => s.perQuestion.find((x) => String(x.questionId) === String(q.questionId)))
-      .filter((c) => c && c.result != null);
-    const totalScore = cells.reduce((acc, c) => acc + c.totalScore, 0);
-    const itemCount = cells.reduce((acc, c) => acc + c.itemCount, 0);
-    return {
-      questionId: q.questionId,
-      order: q.order,
-      text: q.text,
-      avg: itemCount ? round2(totalScore / itemCount) : 0,
-      count: cells.length,
-    };
-  });
-
-  const grandTotal = students.reduce((acc, s) => acc + s.totalScore, 0);
-  const grandItems = students.reduce((acc, s) => acc + s.itemCount, 0);
-
-  res.json({
-    success: true,
-    data: {
-      survey: surveyInfo,
-      questions,
-      students,
-      avgPerQuestion,
-      overallAvg: grandItems ? round2(grandTotal / grandItems) : 0,
-      totalScore: grandTotal,
-      itemCount: grandItems,
-      responseCount: responses.length,
-    },
-  });
-});
-
 module.exports = {
   overview,
   byFeedback,
@@ -582,5 +440,4 @@ module.exports = {
   examDetail,
   perStudentExam,
   feedbackRatings,
-  inTestSurvey,
 };

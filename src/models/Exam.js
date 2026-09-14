@@ -20,7 +20,7 @@ const examSchema = new mongoose.Schema(
       enum: FEEDBACK_TYPES,
       default: 'hint',
     },
-    attemptsPerQuestion: { type: Number, default: 3, min: 1, max: 10 },
+    attemptsPerQuestion: { type: Number, default: 2, min: 1, max: 10 },
     questionTimeSeconds: { type: Number, default: 90, min: 0 },
     showScoreHistory: { type: Boolean, default: false },
     isPublished: { type: Boolean, default: false },

@@ -79,7 +79,7 @@ const createExam = asyncHandler(async (req, res) => {
     description: description || '',
     topic,
     feedbackType: feedbackType || 'hint',
-    attemptsPerQuestion: attemptsPerQuestion || 3,
+    attemptsPerQuestion: attemptsPerQuestion || 2,
     questionTimeSeconds: questionTimeSeconds !== undefined ? questionTimeSeconds : 90,
     showScoreHistory: !!showScoreHistory,
     createdBy: req.user._id,

@@ -21,8 +21,6 @@ const assertCanAnswer = async (req, survey) => {
   if (!survey.isActive) {
     throw new ApiError(403, 'هذا المقياس غير متاح حاليًا.');
   }
-  // يُحتسب هنا تسليم الرابط المستقل فقط — المقياس الذي يظهر بين أسئلة الاختبار
-  // مسار منفصل تمامًا وله سجلاته الخاصة (source: 'in-test').
   const existing = await SurveyResponse.findOne({
     survey: survey._id,
     user: req.user._id,
