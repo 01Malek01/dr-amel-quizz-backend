@@ -237,3 +237,93 @@ describe('نافذة التوقيت', () => {
     assert.equal(meta.body.data.available, false);
   });
 });
+
+describe('حفظ الإعدادات والتفعيل مع المواعيد', () => {
+  const hours = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
+
+  test('حفظ إعدادات اختبار موجود ينجح', async () => {
+    const res = await asAdmin(`/normal-exams/${examId}`, {
+      method: 'PUT',
+      body: { title: 'اختبار عادي معدّل', totalGrade: 50 },
+    });
+    assert.equal(res.status, 200, res.body.message);
+    assert.equal(res.body.data.title, 'اختبار عادي معدّل');
+    assert.equal(res.body.data.totalGrade, 50);
+  });
+
+  test('الاختبار بلا مواعيد يبقى مفعّلًا بعد الحفظ', async () => {
+    const res = await asAdmin(`/normal-exams/${examId}`, {
+      method: 'PUT',
+      body: { title: 'اختبار عادي معدّل', startsAt: null, endsAt: null },
+    });
+    assert.equal(res.status, 200, res.body.message);
+    assert.equal(res.body.data.isActive, true);
+  });
+
+  test('إنشاء بوقت نهاية قبل البداية يرفض بـ400', async () => {
+    const res = await asAdmin('/normal-exams', {
+      method: 'POST',
+      body: { title: 'مواعيد معكوسة', totalGrade: 20, startsAt: hours(48), endsAt: hours(24) },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test('إنشاء بتاريخ غير صالح يرفض بـ400', async () => {
+    const res = await asAdmin('/normal-exams', {
+      method: 'POST',
+      body: { title: 'تاريخ غير صالح', totalGrade: 20, startsAt: 'ليس تاريخًا' },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test('الحفظ بوقت نهاية يساوي البداية يرفض بـ400', async () => {
+    const same = hours(5);
+    const res = await asAdmin(`/normal-exams/${examId}`, {
+      method: 'PUT',
+      body: { startsAt: same, endsAt: same },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test('تفعيل اختبار انتهى وقته يرفض برسالة ولا يتفعّل', async () => {
+    const created = await asAdmin('/normal-exams', {
+      method: 'POST',
+      body: { title: 'انتهى وقته', totalGrade: 20, startsAt: hours(-48), endsAt: hours(-24) },
+    });
+    assert.equal(created.status, 201, created.body.message);
+
+    const res = await asAdmin(`/normal-exams/${created.body.data._id}/active`, {
+      method: 'POST',
+      body: { active: true },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.message, /انتهى وقت نهايته/);
+
+    const after = await asAdmin(`/normal-exams/${created.body.data._id}`);
+    assert.equal(after.body.data.isActive, false);
+  });
+
+  test('تفعيل اختبار لم يحن وقت بدايته يرفض برسالة', async () => {
+    const created = await asAdmin('/normal-exams', {
+      method: 'POST',
+      body: { title: 'لم يبدأ', totalGrade: 20, startsAt: hours(24), endsAt: hours(48) },
+    });
+    assert.equal(created.status, 201, created.body.message);
+
+    const res = await asAdmin(`/normal-exams/${created.body.data._id}/active`, {
+      method: 'POST',
+      body: { active: true },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.message, /تلقائيًا عند وقت بدايته/);
+  });
+
+  test('إيقاف أي اختبار مسموح دائمًا', async () => {
+    const res = await asAdmin(`/normal-exams/${examId}/active`, {
+      method: 'POST',
+      body: { active: false },
+    });
+    assert.equal(res.status, 200, res.body.message);
+    assert.equal(res.body.data.isActive, false);
+  });
+});

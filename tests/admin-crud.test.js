@@ -148,6 +148,7 @@ describe('الاختبارات وأسئلتها', () => {
       body: { title: 'اختبار الإدارة', topic: ids.topic, feedbackType: 'hint' },
     });
     assert.equal(res.status, 201, res.body.message);
+    assert.equal(res.body.data.attemptsPerQuestion, 2, 'الحد الافتراضي للمحاولات محاولتان');
     ids.exam = res.body.data._id;
   });
 
