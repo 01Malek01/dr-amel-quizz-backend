@@ -169,6 +169,23 @@ describe('إنهاء الاختبار', () => {
       assert.ok(r.status < 400, `rating ${q._id} -> ${r.status} ${r.body.message}`);
     }
 
+    const refused = await request('/exam/TESTEX1/complete', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { totalTimeSeconds: 120 },
+    });
+    assert.equal(refused.status, 400, 'الإنهاء قبل المقياس البعدي مرفوض');
+    assert.match(refused.body.message, /المقياس البعدي/);
+
+    const post = await request('/exam/TESTEX1/post-survey', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { answers: [5, 4, 4, 3, 2, 1, 2, 3] },
+    });
+    assert.equal(post.status, 201, post.body.message);
+    assert.equal(post.body.data.totalScore, 24);
+    assert.equal(post.body.data.result, 3);
+
     const res = await request('/exam/TESTEX1/complete', {
       method: 'POST',
       token: users.studentToken,
@@ -247,5 +264,100 @@ describe('لا يوجد مقياس الانفعالات بين الأسئلة', 
       body: { questionOrder: 0, answers: [] },
     });
     assert.equal(res.status, 404);
+  });
+});
+
+describe('المقياس البعدي', () => {
+  test('بدء الاختبار يرسل المقياس البعدي بثمانية بنود', async () => {
+    await makeFeedbackExam({ questionCount: 2, attemptsPerQuestion: 2, code: 'POSTEX1' });
+    const res = await request('/exam/POSTEX1/start', { method: 'POST', token: users.studentToken });
+    assert.equal(res.status, 200, res.body.message);
+    assert.equal(res.body.data.postSurvey.items.length, 8);
+    assert.equal(res.body.data.postSurvey.choices.length, 5);
+    assert.equal(res.body.data.postSurveyDone, false);
+  });
+
+  test('إجابات ناقصة أو خارج المدى ترفض بـ400', async () => {
+    for (const answers of [
+      undefined,
+      [],
+      [5, 5, 5],
+      [5, 5, 5, 5, 5, 5, 5, 9],
+      [5, 5, 5, 5, 5, 5, 5, 0],
+      [5, 5, 5, 5, 5, 5, 5, 2.5],
+      [5, 5, 5, 5, 5, 5, 5, 'x'],
+      'nope',
+    ]) {
+      const res = await request('/exam/POSTEX1/post-survey', {
+        method: 'POST',
+        token: users.studentToken,
+        body: { answers },
+      });
+      assert.equal(res.status, 400, `${JSON.stringify(answers)} -> ${res.status}`);
+    }
+  });
+
+  test('سؤال تجاوز الوقت يُحسب في الأسئلة التي تجاوزت الوقت المسموح', async () => {
+    const start = await request('/exam/POSTEX1/start', { method: 'POST', token: users.studentToken });
+    const [q0] = start.body.data.questions;
+
+    // السؤال الأول: خطأ ثم صواب — والسؤال الثاني لم يُجب (انتهى وقته)
+    await request('/exam/POSTEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q0._id, optionId: q0.options.find((o) => !o.isCorrect)._id },
+    });
+    await request('/exam/POSTEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q0._id, optionId: q0.options.find((o) => o.isCorrect)._id },
+    });
+    await request('/feedback-rating/POSTEX1', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q0._id, item1: 4, item2: 4, item3: 4 },
+    });
+
+    const post = await request('/exam/POSTEX1/post-survey', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { answers: [4, 4, 4, 4, 4, 4, 4, 4] },
+    });
+    assert.equal(post.status, 201, post.body.message);
+
+    const again = await request('/exam/POSTEX1/post-survey', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { answers: [1, 1, 1, 1, 1, 1, 1, 1] },
+    });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.data.alreadySubmitted, true, 'لا يُسجَّل المقياس البعدي مرتين');
+
+    const res = await request('/exam/POSTEX1/complete', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { totalTimeSeconds: 30 },
+    });
+    assert.equal(res.status, 200, res.body.message);
+    assert.equal(res.body.data.skippedCount, 1);
+  });
+
+  test('نتائج المقياس البعدي للمسؤول', async () => {
+    const res = await request(`/stats/post-survey?exam=${fixture.exam._id}`, {
+      token: users.adminToken,
+    });
+    assert.equal(res.status, 200, res.body.message);
+    assert.equal(res.body.data.responseCount, 1);
+    assert.equal(res.body.data.items.length, 8);
+    assert.deepEqual(res.body.data.students[0].scores, [5, 4, 4, 3, 2, 1, 2, 3]);
+    assert.equal(res.body.data.students[0].result, 3);
+    assert.equal(res.body.data.overallAvg, 3);
+  });
+
+  test('نتائج المقياس البعدي محمية عن الطلاب', async () => {
+    const res = await request(`/stats/post-survey?exam=${fixture.exam._id}`, {
+      token: users.studentToken,
+    });
+    assert.equal(res.status, 403);
   });
 });

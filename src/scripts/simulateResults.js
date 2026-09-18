@@ -22,6 +22,7 @@ const User = require('../models/User');
 const Session = require('../models/Session');
 const Attempt = require('../models/Attempt');
 const FeedbackRating = require('../models/FeedbackRating');
+const PostExamSurvey = require('../models/PostExamSurvey');
 const Survey = require('../models/Survey');
 const SurveyQuestion = require('../models/SurveyQuestion');
 const SurveyResponse = require('../models/SurveyResponse');
@@ -84,6 +85,7 @@ const clean = async () => {
     await Session.deleteMany({ exam: exam._id });
     await Attempt.deleteMany({ exam: exam._id });
     await FeedbackRating.deleteMany({ exam: exam._id });
+    await PostExamSurvey.deleteMany({ exam: exam._id });
     await Question.deleteMany({ exam: exam._id });
     await exam.deleteOne();
   }
@@ -94,6 +96,7 @@ const clean = async () => {
     await Session.deleteMany({ user: { $in: ids } });
     await Attempt.deleteMany({ user: { $in: ids } });
     await FeedbackRating.deleteMany({ user: { $in: ids } });
+    await PostExamSurvey.deleteMany({ user: { $in: ids } });
     await User.deleteMany({ _id: { $in: ids } });
   }
 
@@ -276,6 +279,23 @@ const seed = async () => {
     });
     await session.save();
 
+    // المقياس البعدي: إلزامي بعد آخر سؤال
+    const postAnswers = PREBUILT_SURVEY.items.map((text, idx) => {
+      const choice = pickChoice(p.mood + ((idx % 3) - 1));
+      return { item: idx, text, score: choice.score, label: choice.label };
+    });
+    const postTotal = postAnswers.reduce((sum, a) => sum + a.score, 0);
+    await PostExamSurvey.create({
+      user: user._id,
+      exam: exam._id,
+      session: session._id,
+      answers: postAnswers,
+      totalScore: postTotal,
+      itemCount: postAnswers.length,
+      result: Math.round((postTotal / postAnswers.length) * 100) / 100,
+      submittedAt: completedAt,
+    });
+
     // إجابات بعض الطلاب على رابط المقياس
     if (['noura', 'fahad', 'majed'].includes(p.u)) {
       const standaloneAnswers = surveyItems.map((item, idx) => {
@@ -328,6 +348,7 @@ const seed = async () => {
   console.log(`  إجابات على الرابط: ${viaLink}`);
   console.log('\nأين تُعرض:');
   console.log('  الدرجات والكؤوس والشارات: الإحصائيات ← اختر اختبار المحاكاة');
+  console.log('  المقياس البعدي: كل الاختبارات ← افتح الاختبار ← تبويب نتائج المقياس البعدي');
   console.log('  المقياس عبر الرابط: المقاييس القبلية ← إدارة ← تبويب النتائج');
   console.log('\nللحذف: node src/scripts/simulateResults.js --clean');
 

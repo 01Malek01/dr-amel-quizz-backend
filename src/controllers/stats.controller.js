@@ -1,6 +1,6 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
-const { FEEDBACK_TYPE_LABELS } = require('../constants');
+const { FEEDBACK_TYPE_LABELS, PREBUILT_SURVEY } = require('../constants');
 const User = require('../models/User');
 const Group = require('../models/Group');
 const Exam = require('../models/Exam');
@@ -8,6 +8,7 @@ const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
 const FeedbackRating = require('../models/FeedbackRating');
+const PostExamSurvey = require('../models/PostExamSurvey');
 
 const overview = asyncHandler(async (req, res) => {
   const [students, groups, exams, publishedExams, sessions, completedSessions, attempts] =
@@ -432,6 +433,64 @@ const feedbackRatings = asyncHandler(async (req, res) => {
   });
 });
 
+// نتائج المقياس البعدي لاختبار: صف لكل طالب وعمود لكل بند من البنود الثمانية
+const postSurveyResults = asyncHandler(async (req, res) => {
+  const { exam = '' } = req.query;
+  if (!exam) throw new ApiError(400, 'حدد الاختبار');
+
+  const examDoc = await Exam.findById(exam).select('title');
+  if (!examDoc) throw new ApiError(404, 'الاختبار غير موجود');
+
+  const rows = await PostExamSurvey.find({ exam: examDoc._id })
+    .populate({ path: 'user', select: 'name username group', populate: { path: 'group', select: 'name' } })
+    .sort({ submittedAt: -1 });
+
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const { items, choices } = PREBUILT_SURVEY;
+  const scores = choices.map((c) => c.score);
+
+  const students = rows.map((r) => ({
+    id: r._id,
+    studentName: r.user?.name || 'محذوف',
+    username: r.user?.username || '',
+    group: r.user?.group?.name || null,
+    scores: items.map((_, i) => {
+      const a = r.answers.find((x) => x.item === i);
+      return a ? a.score : null;
+    }),
+    totalScore: r.totalScore,
+    itemCount: r.itemCount,
+    result: r.result,
+    submittedAt: r.submittedAt,
+  }));
+
+  const avgPerItem = items.map((text, i) => {
+    const vals = students.map((st) => st.scores[i]).filter((v) => v != null);
+    return {
+      item: i,
+      text,
+      avg: vals.length ? r2(vals.reduce((a, b) => a + b, 0) / vals.length) : 0,
+    };
+  });
+
+  const totalScore = students.reduce((sum, st) => sum + st.totalScore, 0);
+  const itemCount = students.reduce((sum, st) => sum + st.itemCount, 0);
+
+  res.json({
+    success: true,
+    data: {
+      items,
+      scale: { min: Math.min(...scores), max: Math.max(...scores) },
+      students,
+      avgPerItem,
+      totalScore,
+      itemCount,
+      overallAvg: itemCount ? r2(totalScore / itemCount) : 0,
+      responseCount: students.length,
+    },
+  });
+});
+
 module.exports = {
   overview,
   byFeedback,
@@ -440,4 +499,5 @@ module.exports = {
   examDetail,
   perStudentExam,
   feedbackRatings,
+  postSurveyResults,
 };

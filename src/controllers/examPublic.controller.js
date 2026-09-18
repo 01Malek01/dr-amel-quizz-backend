@@ -1,12 +1,13 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
-const { FEEDBACK_TYPE_LABELS } = require('../constants');
+const { FEEDBACK_TYPE_LABELS, PREBUILT_SURVEY } = require('../constants');
 const Exam = require('../models/Exam');
 const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
 const Group = require('../models/Group');
 const FeedbackRating = require('../models/FeedbackRating');
+const PostExamSurvey = require('../models/PostExamSurvey');
 const Setting = require('../models/Setting');
 
 const getMeta = asyncHandler(async (req, res) => {
@@ -69,6 +70,8 @@ const start = asyncHandler(async (req, res) => {
     exam: exam._id,
   }).select('question');
 
+  const postSurveyDone = !!(await PostExamSurvey.exists({ session: session._id }));
+
   const sanitized = questions.map((q) => ({
     _id: q._id,
     order: q.order,
@@ -95,6 +98,14 @@ const start = asyncHandler(async (req, res) => {
       questionCount: sanitized.length,
       questions: sanitized,
       ratedQuestions: ratings.map((r) => r.question),
+      // المقياس البعدي: إلزامي بعد آخر سؤال وقبل عرض النتيجة
+      postSurvey: {
+        title: `المقياس البعدي — ${PREBUILT_SURVEY.title}`,
+        intro: PREBUILT_SURVEY.intro,
+        items: PREBUILT_SURVEY.items,
+        choices: PREBUILT_SURVEY.choices,
+      },
+      postSurveyDone,
     },
   });
 });
@@ -236,8 +247,21 @@ const complete = asyncHandler(async (req, res) => {
     }
   }
 
-  const questionCount = await Question.countDocuments({ exam: exam._id });
-  const skippedCount = Math.max(questionCount - (session.correctCount + session.wrongCount), 0);
+  const postSurveyDone = await PostExamSurvey.exists({ session: session._id });
+  if (!postSurveyDone) {
+    throw new ApiError(400, 'أكمل المقياس البعدي أولًا');
+  }
+
+  // الأسئلة التي تجاوزت الوقت المسموح = ما لم يُحسم: لم يُجب صحيحًا ولم تنفد
+  // محاولاته (الانتقال التلقائي لا يحدث إلا عند الصواب أو النفاد أو انتهاء الوقت)
+  const examQuestions = await Question.find({ exam: exam._id }).select('_id');
+  const questionCount = examQuestions.length;
+  const resolved = new Set(
+    (session.details || [])
+      .filter((d) => d.question && (d.isCorrect || d.attempts >= exam.attemptsPerQuestion))
+      .map((d) => String(d.question))
+  );
+  const skippedCount = examQuestions.filter((q) => !resolved.has(String(q._id))).length;
 
   session.set({
     status: 'completed',
@@ -294,4 +318,60 @@ const complete = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { getMeta, start, submit, complete };
+const submitPostSurvey = asyncHandler(async (req, res) => {
+  const exam = await Exam.findOne({ code: req.params.code, isPublished: true });
+  if (!exam) throw new ApiError(404, 'الاختبار غير موجود أو غير منشور');
+
+  const session = await Session.findOne({
+    user: req.user._id,
+    exam: exam._id,
+    status: 'in-progress',
+  });
+  if (!session) throw new ApiError(400, 'لا يوجد اختبار نشط');
+
+  const existing = await PostExamSurvey.findOne({ session: session._id });
+  if (existing) {
+    return res.json({ success: true, data: { alreadySubmitted: true, result: existing.result } });
+  }
+
+  const { items, choices } = PREBUILT_SURVEY;
+  const { answers } = req.body;
+  if (!Array.isArray(answers) || answers.length !== items.length) {
+    throw new ApiError(400, 'أجب عن جميع بنود المقياس البعدي');
+  }
+
+  const choiceByScore = new Map(choices.map((c) => [c.score, c]));
+  const answerDocs = answers.map((raw, i) => {
+    const score = Number(raw);
+    const choice = Number.isInteger(score) ? choiceByScore.get(score) : null;
+    if (!choice) throw new ApiError(400, `اختر إجابة صحيحة للبند ${i + 1}`);
+    return { item: i, text: items[i], score, label: choice.label };
+  });
+
+  const totalScore = answerDocs.reduce((sum, a) => sum + a.score, 0);
+  const itemCount = answerDocs.length;
+  const result = Math.round((totalScore / itemCount) * 100) / 100;
+
+  try {
+    await PostExamSurvey.create({
+      user: req.user._id,
+      exam: exam._id,
+      session: session._id,
+      answers: answerDocs,
+      totalScore,
+      itemCount,
+      result,
+      submittedAt: new Date(),
+    });
+  } catch (err) {
+    // ضغطتان متتاليتان: الثانية تصطدم بقيد التفرّد على الجلسة
+    if (err.code === 11000) {
+      return res.json({ success: true, data: { alreadySubmitted: true } });
+    }
+    throw err;
+  }
+
+  res.status(201).json({ success: true, data: { totalScore, itemCount, result } });
+});
+
+module.exports = { getMeta, start, submit, complete, submitPostSurvey };
