@@ -276,7 +276,7 @@ const complete = asyncHandler(async (req, res) => {
   let history = null;
   if (exam.showScoreHistory) {
     const pastSessions = await Session.find({ user: req.user._id, status: 'completed' })
-      .populate({ path: 'exam', select: 'title' })
+      .populate({ path: 'exam', select: 'title attemptsPerQuestion' })
       .sort({ completedAt: -1 });
     const examIds = pastSessions.map((s) => s.exam?._id).filter(Boolean);
     const counts = await Question.aggregate([
@@ -286,13 +286,20 @@ const complete = asyncHandler(async (req, res) => {
     const countMap = Object.fromEntries(counts.map((c) => [String(c._id), c.count]));
     history = pastSessions.map((s) => {
       const qCount = countMap[String(s.exam?._id)] || 0;
+      // عدد الأسئلة الخاطئة = أسئلة نفدت محاولاتها بلا إجابة صحيحة،
+      // وليس عدد المحاولات الخاطئة (سؤال واحد قد يُخطئ فيه الطالب مرتين)
+      const tries = s.exam?.attemptsPerQuestion || 1;
+      const wrongQuestions = (s.details || []).filter(
+        (d) => !d.isCorrect && d.attempts >= tries
+      ).length;
       return {
         sessionId: s._id,
         examId: s.exam?._id,
         examTitle: s.exam?.title || 'اختبار محذوف',
         questionCount: qCount,
         correctCount: s.correctCount,
-        wrongCount: s.wrongCount,
+        wrongQuestions,
+        wrongAttempts: s.wrongCount,
         skippedCount: s.skippedCount || 0,
         timeSeconds: s.totalTimeSeconds || 0,
         badges: s.badges || 0,

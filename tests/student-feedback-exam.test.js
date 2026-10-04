@@ -361,3 +361,64 @@ describe('المقياس البعدي', () => {
     assert.equal(res.status, 403);
   });
 });
+
+describe('سجل الدرجات', () => {
+  test('الأسئلة الخاطئة تُحسب بالسؤال لا بالمحاولة', async () => {
+    await makeFeedbackExam({
+      questionCount: 2,
+      attemptsPerQuestion: 2,
+      showScoreHistory: true,
+      code: 'HISTEX1',
+    });
+    const start = await request('/exam/HISTEX1/start', {
+      method: 'POST',
+      token: users.studentToken,
+    });
+    const [q0, q1] = start.body.data.questions;
+
+    // السؤال الأول: خطأ مرتين (نفدت محاولاته) — والثاني صحيح
+    for (let i = 0; i < 2; i++) {
+      await request('/exam/HISTEX1/submit', {
+        method: 'POST',
+        token: users.studentToken,
+        body: { questionId: q0._id, optionId: q0.options.find((o) => !o.isCorrect)._id },
+      });
+    }
+    await request('/exam/HISTEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q1._id, optionId: q1.options.find((o) => o.isCorrect)._id },
+    });
+    for (const q of [q0, q1]) {
+      await request('/feedback-rating/HISTEX1', {
+        method: 'POST',
+        token: users.studentToken,
+        body: { questionId: q._id, item1: 4, item2: 4, item3: 4 },
+      });
+    }
+    await request('/exam/HISTEX1/post-survey', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { answers: [4, 4, 4, 4, 4, 4, 4, 4] },
+    });
+
+    const res = await request('/exam/HISTEX1/complete', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { totalTimeSeconds: 40 },
+    });
+    assert.equal(res.status, 200, res.body.message);
+    assert.ok(Array.isArray(res.body.data.history), 'سجل الدرجات مرسل');
+
+    const row = res.body.data.history.find((h) => String(h.sessionId) === String(res.body.data.sessionId));
+    assert.ok(row, 'الاختبار الحالي موجود في السجل');
+    assert.equal(row.correctCount, 1);
+    assert.equal(row.wrongQuestions, 1, 'سؤال واحد خاطئ وإن أخطأ فيه مرتين');
+    assert.equal(row.wrongAttempts, 2);
+    assert.equal(row.questionCount, 2);
+    assert.ok(
+      res.body.data.history.length >= 3,
+      'السجل يشمل كل الاختبارات المكتملة'
+    );
+  });
+});
