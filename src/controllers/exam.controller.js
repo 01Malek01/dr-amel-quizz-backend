@@ -7,6 +7,7 @@ const Topic = require('../models/Topic');
 const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
+const User = require('../models/User');
 const FeedbackRating = require('../models/FeedbackRating');
 
 const listExams = asyncHandler(async (req, res) => {
@@ -44,10 +45,9 @@ const listExams = asyncHandler(async (req, res) => {
 });
 
 const getExam = asyncHandler(async (req, res) => {
-  const exam = await Exam.findById(req.params.id).populate({
-    path: 'topic',
-    populate: { path: 'chapter' },
-  });
+  const exam = await Exam.findById(req.params.id)
+    .populate({ path: 'topic', populate: { path: 'chapter' } })
+    .populate({ path: 'lateAccessUsers', select: 'name username' });
   if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
 
   const questions = await Question.find({ exam: exam._id }).sort({ order: 1 });
@@ -153,6 +153,42 @@ const deleteExam = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'تم حذف الاختبار وسجلاته' });
 });
 
+// فتح اختبار مغلق لطالب واحد تأخّر عن موعده المعلن
+const grantLateAccess = asyncHandler(async (req, res) => {
+  const exam = await Exam.findById(req.params.id);
+  if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
+  if (!exam.code) {
+    throw new ApiError(400, 'انشر الاختبار أولًا ليصبح له رابط يمكن مشاركته');
+  }
+
+  const student = await User.findById(req.body.userId).select('name username role');
+  if (!student || student.role !== 'student') throw new ApiError(404, 'الطالب غير موجود');
+
+  const done = await Session.findOne({ user: student._id, exam: exam._id, status: 'completed' });
+  if (done) throw new ApiError(409, 'أدى هذا الطالب الاختبار بالفعل، ولا يمكن إعادته له');
+
+  if (!exam.lateAccessUsers.some((id) => String(id) === String(student._id))) {
+    exam.lateAccessUsers.push(student._id);
+    await exam.save();
+  }
+
+  await exam.populate({ path: 'lateAccessUsers', select: 'name username' });
+  res.json({ success: true, data: exam.lateAccessUsers });
+});
+
+const revokeLateAccess = asyncHandler(async (req, res) => {
+  const exam = await Exam.findById(req.params.id);
+  if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
+
+  exam.lateAccessUsers = exam.lateAccessUsers.filter(
+    (id) => String(id) !== String(req.params.userId)
+  );
+  await exam.save();
+
+  await exam.populate({ path: 'lateAccessUsers', select: 'name username' });
+  res.json({ success: true, data: exam.lateAccessUsers });
+});
+
 module.exports = {
   listExams,
   getExam,
@@ -161,4 +197,6 @@ module.exports = {
   publishExam,
   unpublishExam,
   deleteExam,
+  grantLateAccess,
+  revokeLateAccess,
 };

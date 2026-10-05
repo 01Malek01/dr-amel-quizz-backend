@@ -10,6 +10,8 @@ const normalExamSchema = new mongoose.Schema(
     description: { type: String, trim: true, default: '' },
     totalGrade: { type: Number, required: [true, 'درجة الاختبار مطلوبة'], min: 1 },
     isActive: { type: Boolean, default: false },
+    // يسمح للطالب بترك أسئلة بلا إجابة (تُحسب خطأ)
+    allowSkip: { type: Boolean, default: false },
     startsAt: { type: Date, default: null },
     endsAt: { type: Date, default: null },
     code: { type: String, unique: true, sparse: true },

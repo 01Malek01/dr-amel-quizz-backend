@@ -7,6 +7,8 @@ const {
   publishExam,
   unpublishExam,
   deleteExam,
+  grantLateAccess,
+  revokeLateAccess,
 } = require('../controllers/exam.controller');
 const {
   getQuestions,
@@ -25,6 +27,8 @@ router.put('/:id', updateExam);
 router.delete('/:id', deleteExam);
 router.post('/:id/publish', publishExam);
 router.post('/:id/unpublish', unpublishExam);
+router.post('/:id/late-access', grantLateAccess);
+router.delete('/:id/late-access/:userId', revokeLateAccess);
 router.get('/:id/questions', getQuestions);
 router.put('/:id/questions', setQuestions);
 

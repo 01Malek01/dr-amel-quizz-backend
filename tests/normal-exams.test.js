@@ -327,3 +327,123 @@ describe('حفظ الإعدادات والتفعيل مع المواعيد', () 
     assert.equal(res.body.data.isActive, false);
   });
 });
+
+describe('تخطي الأسئلة', () => {
+  let skipExam;
+  let skipCode;
+  let skipQuestions;
+
+  const newStudent = async (username) => {
+    const created = await asAdmin('/users', {
+      method: 'POST',
+      body: { name: `طالب ${username}`, username, password: 'pass1234', role: 'student' },
+    });
+    assert.equal(created.status, 201, created.body.message);
+    const login = await request('/auth/login', {
+      method: 'POST',
+      body: { identifier: username, password: 'pass1234' },
+    });
+    return login.body.token;
+  };
+
+  before(async () => {
+    const created = await asAdmin('/normal-exams', {
+      method: 'POST',
+      body: { title: 'اختبار يسمح بالتخطي', totalGrade: 100, allowSkip: true },
+    });
+    assert.equal(created.status, 201, created.body.message);
+    skipExam = created.body.data._id;
+    skipCode = created.body.data.code;
+    assert.equal(created.body.data.allowSkip, true, 'الخيار محفوظ عند الإنشاء');
+
+    const saved = await asAdmin(`/normal-exams/${skipExam}/questions`, {
+      method: 'PUT',
+      body: {
+        questions: [1, 2].map((n) => ({
+          _id: null,
+          text: `سؤال التخطي ${n}`,
+          options: [
+            { text: 'صحيحة', isCorrect: true },
+            { text: 'خاطئة', isCorrect: false },
+          ],
+        })),
+      },
+    });
+    skipQuestions = saved.body.data;
+    await asAdmin(`/normal-exams/${skipExam}/active`, { method: 'POST', body: { active: true } });
+  });
+
+  test('الطالب يرى أن التخطي مسموح', async () => {
+    const meta = await request(`/normal-exam/${skipCode}`);
+    assert.equal(meta.body.data.allowSkip, true);
+  });
+
+  test('التسليم مع سؤال متروك يُقبل ويُحسب خطأ', async () => {
+    const token = await newStudent('skipstu1');
+    const q = skipQuestions[0];
+    const res = await request(`/normal-exam/${skipCode}/submit`, {
+      method: 'POST',
+      token,
+      body: {
+        answers: [{ questionId: String(q._id), optionId: String(q.options.find((o) => o.isCorrect)._id) }],
+      },
+    });
+    assert.equal(res.status, 201, res.body.message);
+    assert.equal(res.body.data.correctCount, 1);
+    assert.equal(res.body.data.skippedCount, 1);
+    assert.equal(res.body.data.questionCount, 2);
+    assert.equal(res.body.data.grade, 50);
+  });
+
+  test('التسليم بلا أي إجابة يُقبل بدرجة صفر', async () => {
+    const token = await newStudent('skipstu2');
+    const res = await request(`/normal-exam/${skipCode}/submit`, {
+      method: 'POST',
+      token,
+      body: { answers: [] },
+    });
+    assert.equal(res.status, 201, res.body.message);
+    assert.equal(res.body.data.skippedCount, 2);
+    assert.equal(res.body.data.grade, 0);
+  });
+
+  test('إجابة بخيار غير موجود ترفض وإن كان التخطي مسموحًا', async () => {
+    const token = await newStudent('skipstu3');
+    const res = await request(`/normal-exam/${skipCode}/submit`, {
+      method: 'POST',
+      token,
+      body: {
+        answers: [{ questionId: String(skipQuestions[0]._id), optionId: String(MISSING_ID) }],
+      },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test('إلغاء التخطي يعيد إلزام الإجابة عن كل الأسئلة', async () => {
+    const off = await asAdmin(`/normal-exams/${skipExam}`, {
+      method: 'PUT',
+      body: { allowSkip: false },
+    });
+    assert.equal(off.body.data.allowSkip, false);
+
+    const token = await newStudent('skipstu4');
+    const q = skipQuestions[0];
+    const res = await request(`/normal-exam/${skipCode}/submit`, {
+      method: 'POST',
+      token,
+      body: {
+        answers: [{ questionId: String(q._id), optionId: String(q.options.find((o) => o.isCorrect)._id) }],
+      },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.message, /جميع الأسئلة/);
+  });
+
+  test('النتائج تُظهر عدد الأسئلة المتروكة', async () => {
+    const res = await asAdmin(`/normal-exams/${skipExam}/results`);
+    assert.equal(res.status, 200, res.body.message);
+    const rows = res.body.data.results;
+    assert.ok(rows.some((r) => r.skippedCount === 1), 'صف بسؤال متروك واحد');
+    assert.ok(rows.some((r) => r.skippedCount === 2), 'صف بسؤالين متروكين');
+  });
+});

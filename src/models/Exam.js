@@ -24,6 +24,8 @@ const examSchema = new mongoose.Schema(
     questionTimeSeconds: { type: Number, default: 90, min: 0 },
     showScoreHistory: { type: Boolean, default: false },
     isPublished: { type: Boolean, default: false },
+    // طلاب فُتح لهم الاختبار استثناءً بعد إغلاقه (تأخّروا عن موعده المعلن)
+    lateAccessUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     code: { type: String, unique: true, sparse: true },
     publishedAt: { type: Date, default: null },
     completions: { type: Number, default: 0 },

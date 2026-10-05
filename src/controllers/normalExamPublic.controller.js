@@ -25,6 +25,7 @@ const getMeta = asyncHandler(async (req, res) => {
       code: exam.code,
       totalGrade: exam.totalGrade,
       questionCount,
+      allowSkip: !!exam.allowSkip,
       available: getEffectiveActive(exam),
       startsAt: exam.startsAt,
       endsAt: exam.endsAt,
@@ -50,6 +51,7 @@ const getQuestions = asyncHandler(async (req, res) => {
       examDescription: exam.description,
       totalGrade: exam.totalGrade,
       questionCount: questions.length,
+      allowSkip: !!exam.allowSkip,
       questions: sanitizeQuestions(questions),
       lastSubmissionAt: last ? last.submittedAt : null,
     },
@@ -68,11 +70,12 @@ const submit = asyncHandler(async (req, res) => {
   }
 
   const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
-  if (answers.length !== questions.length) {
+  if (!exam.allowSkip && answers.length !== questions.length) {
     throw new ApiError(400, 'يجب الإجابة على جميع الأسئلة قبل التسليم');
   }
 
   let correctCount = 0;
+  let skippedCount = 0;
   const answerDocs = [];
 
   for (const q of questions) {
@@ -80,7 +83,13 @@ const submit = asyncHandler(async (req, res) => {
       (a) => a && a.questionId && String(a.questionId) === String(q._id)
     );
     if (!chosen || !chosen.optionId) {
-      throw new ApiError(400, 'أجب على جميع الأسئلة قبل التسليم');
+      // السؤال المتروك يُحسب خطأ إن كان التخطي مسموحًا، وإلا فالتسليم مرفوض
+      if (!exam.allowSkip) {
+        throw new ApiError(400, 'أجب على جميع الأسئلة قبل التسليم');
+      }
+      skippedCount += 1;
+      answerDocs.push({ question: q._id, chosenOption: null, isCorrect: false, skipped: true });
+      continue;
     }
     const option = q.options.id(chosen.optionId);
     if (!option) throw new ApiError(400, 'إجابة غير موجودة في أحد الأسئلة');
@@ -91,6 +100,7 @@ const submit = asyncHandler(async (req, res) => {
       question: q._id,
       chosenOption: option._id,
       isCorrect,
+      skipped: false,
     });
   }
 
@@ -105,6 +115,7 @@ const submit = asyncHandler(async (req, res) => {
     user: req.user._id,
     answers: answerDocs,
     correctCount,
+    skippedCount,
     questionCount: questions.length,
     grade,
     totalGrade: exam.totalGrade,
@@ -117,6 +128,7 @@ const submit = asyncHandler(async (req, res) => {
       resultId: result._id,
       examTitle: exam.title,
       correctCount,
+      skippedCount,
       questionCount: questions.length,
       grade,
       totalGrade: exam.totalGrade,

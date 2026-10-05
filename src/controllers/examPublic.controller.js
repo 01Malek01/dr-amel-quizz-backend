@@ -10,15 +10,27 @@ const FeedbackRating = require('../models/FeedbackRating');
 const PostExamSurvey = require('../models/PostExamSurvey');
 const Setting = require('../models/Setting');
 
+const hasLateAccess = (exam, user) =>
+  !!user && (exam.lateAccessUsers || []).some((id) => String(id) === String(user._id));
+
+// الاختبار متاح للطالب إن كان منشورًا، أو إن فتحه له المسؤول استثناءً بعد إغلاقه
+const findOpenExam = async (code, user) => {
+  const exam = await Exam.findOne({ code });
+  if (!exam) return null;
+  return exam.isPublished || hasLateAccess(exam, user) ? exam : null;
+};
+
+const CLOSED_MESSAGE =
+  'الاختبار غير متاح حاليًا. تحقق من الرابط، وإن كان المسؤول قد فتحه لك فسجّل الدخول بحسابك ثم افتح الرابط مرة أخرى.';
+
 const getMeta = asyncHandler(async (req, res) => {
-  const exam = await Exam.findOne({ code: req.params.code, isPublished: true }).populate({
-    path: 'topic',
-    populate: { path: 'chapter' },
-  });
+  const exam = await findOpenExam(req.params.code, req.user);
 
   if (!exam) {
-    throw new ApiError(404, 'الاختبار غير موجود. تحقق من الرابط أو راجع المسؤول.');
+    throw new ApiError(404, CLOSED_MESSAGE);
   }
+
+  await exam.populate({ path: 'topic', populate: { path: 'chapter' } });
 
   const questionCount = await Question.countDocuments({ exam: exam._id });
 
@@ -41,8 +53,8 @@ const getMeta = asyncHandler(async (req, res) => {
 });
 
 const start = asyncHandler(async (req, res) => {
-  const exam = await Exam.findOne({ code: req.params.code, isPublished: true });
-  if (!exam) throw new ApiError(404, 'الاختبار غير موجود أو غير منشور');
+  const exam = await findOpenExam(req.params.code, req.user);
+  if (!exam) throw new ApiError(404, CLOSED_MESSAGE);
 
   const completed = await Session.findOne({
     user: req.user._id,
@@ -114,8 +126,8 @@ const submit = asyncHandler(async (req, res) => {
   const { code } = req.params;
   const { questionId, optionId, timeTakenSeconds } = req.body;
 
-  const exam = await Exam.findOne({ code, isPublished: true });
-  if (!exam) throw new ApiError(404, 'الاختبار غير موجود أو غير منشور');
+  const exam = await findOpenExam(code, req.user);
+  if (!exam) throw new ApiError(404, CLOSED_MESSAGE);
 
   const session = await Session.findOne({
     user: req.user._id,
@@ -326,8 +338,8 @@ const complete = asyncHandler(async (req, res) => {
 });
 
 const submitPostSurvey = asyncHandler(async (req, res) => {
-  const exam = await Exam.findOne({ code: req.params.code, isPublished: true });
-  if (!exam) throw new ApiError(404, 'الاختبار غير موجود أو غير منشور');
+  const exam = await findOpenExam(req.params.code, req.user);
+  if (!exam) throw new ApiError(404, CLOSED_MESSAGE);
 
   const session = await Session.findOne({
     user: req.user._id,

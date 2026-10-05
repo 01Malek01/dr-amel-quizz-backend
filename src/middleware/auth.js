@@ -28,6 +28,22 @@ const protect = async (req, res, next) => {
   }
 };
 
+// يقرأ المستخدم إن أرسل توكنًا، ولا يرفض الزائر: لصفحات يراها الجميع
+// ويتغيّر محتواها إن كان صاحب الطلب مسجّل الدخول (مثل استثناء الطالب المتأخر)
+const optionalAuth = async (req, res, next) => {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer')) return next();
+
+  try {
+    const decoded = verifyToken(header.split(' ')[1]);
+    const user = await User.findById(decoded.id);
+    if (user && user.isActive) req.user = user;
+  } catch {
+    // توكن منتهٍ أو تالف: يُعامل صاحبه كزائر
+  }
+  next();
+};
+
 const adminOnly = (req, res, next) => {
   if (!req.user || req.user.role !== 'admin') {
     return next(new ApiError(403, 'للمديرين فقط'));
@@ -35,4 +51,4 @@ const adminOnly = (req, res, next) => {
   next();
 };
 
-module.exports = { protect, adminOnly };
+module.exports = { protect, optionalAuth, adminOnly };

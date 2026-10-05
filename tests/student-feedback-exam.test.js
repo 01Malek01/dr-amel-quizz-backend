@@ -23,7 +23,7 @@ describe('بيانات الاختبار العامة', () => {
   test('رمز غير موجود يعيد 404 برسالة عربية', async () => {
     const res = await request('/exam/NOPE1234');
     assert.equal(res.status, 404);
-    assert.match(res.body.message, /الاختبار غير موجود/);
+    assert.match(res.body.message, /الاختبار غير متاح/);
   });
 
   test('الاختبار المنشور يعيد بياناته بدون تسجيل دخول', async () => {
@@ -420,5 +420,100 @@ describe('سجل الدرجات', () => {
       res.body.data.history.length >= 3,
       'السجل يشمل كل الاختبارات المكتملة'
     );
+  });
+});
+
+describe('فتح الاختبار لطالب متأخر', () => {
+  let closed;
+
+  before(async () => {
+    closed = await makeFeedbackExam({
+      questionCount: 2,
+      attemptsPerQuestion: 2,
+      code: 'LATEEX1',
+      isPublished: false,
+    });
+  });
+
+  test('الاختبار المغلق لا يُفتح لزائر ولا لطالب بلا استثناء', async () => {
+    assert.equal((await request('/exam/LATEEX1')).status, 404);
+    assert.equal((await request('/exam/LATEEX1', { token: users.studentToken })).status, 404);
+    const start = await request('/exam/LATEEX1/start', {
+      method: 'POST',
+      token: users.studentToken,
+    });
+    assert.equal(start.status, 404);
+  });
+
+  test('الاستثناء يحتاج طالبًا موجودًا', async () => {
+    const bad = await request(`/exams/${closed.exam._id}/late-access`, {
+      method: 'POST',
+      token: users.adminToken,
+      body: { userId: MISSING_ID },
+    });
+    assert.equal(bad.status, 404);
+
+    const admin = await request(`/exams/${closed.exam._id}/late-access`, {
+      method: 'POST',
+      token: users.adminToken,
+      body: { userId: users.admin._id },
+    });
+    assert.equal(admin.status, 404, 'المسؤول ليس طالبًا');
+  });
+
+  test('المسؤول يفتح الاختبار لطالب واحد فيعمل معه الرابط', async () => {
+    const granted = await request(`/exams/${closed.exam._id}/late-access`, {
+      method: 'POST',
+      token: users.adminToken,
+      body: { userId: users.student._id },
+    });
+    assert.equal(granted.status, 200, granted.body.message);
+    assert.equal(granted.body.data.length, 1);
+
+    const meta = await request('/exam/LATEEX1', { token: users.studentToken });
+    assert.equal(meta.status, 200, meta.body.message);
+
+    const start = await request('/exam/LATEEX1/start', {
+      method: 'POST',
+      token: users.studentToken,
+    });
+    assert.equal(start.status, 200, start.body.message);
+  });
+
+  test('الاستثناء لا يفتح الاختبار لبقية الطلاب ولا للزوار', async () => {
+    assert.equal((await request('/exam/LATEEX1')).status, 404);
+    const created = await request('/users', {
+      method: 'POST',
+      token: users.adminToken,
+      body: { name: 'طالب آخر', username: 'latestu2', password: 'pass1234', role: 'student' },
+    });
+    assert.equal(created.status, 201, created.body.message);
+    const otherToken = (
+      await request('/auth/login', {
+        method: 'POST',
+        body: { identifier: 'latestu2', password: 'pass1234' },
+      })
+    ).body.token;
+
+    assert.equal((await request('/exam/LATEEX1', { token: otherToken })).status, 404);
+  });
+
+  test('إلغاء الاستثناء يغلق الاختبار من جديد', async () => {
+    const revoked = await request(`/exams/${closed.exam._id}/late-access/${users.student._id}`, {
+      method: 'DELETE',
+      token: users.adminToken,
+    });
+    assert.equal(revoked.status, 200, revoked.body.message);
+    assert.equal(revoked.body.data.length, 0);
+    assert.equal((await request('/exam/LATEEX1', { token: users.studentToken })).status, 404);
+  });
+
+  test('الطالب الذي أدّى الاختبار لا يُعاد له', async () => {
+    const res = await request(`/exams/${fixture.exam._id}/late-access`, {
+      method: 'POST',
+      token: users.adminToken,
+      body: { userId: users.student._id },
+    });
+    assert.equal(res.status, 409);
   });
 });

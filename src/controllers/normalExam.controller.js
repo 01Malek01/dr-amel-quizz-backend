@@ -62,7 +62,7 @@ const getNormalExam = asyncHandler(async (req, res) => {
 });
 
 const createNormalExam = asyncHandler(async (req, res) => {
-  const { title, description, totalGrade, startsAt, endsAt } = req.body;
+  const { title, description, totalGrade, startsAt, endsAt, allowSkip } = req.body;
 
   if (!title) throw new ApiError(400, 'عنوان الاختبار مطلوب');
   const grade = Number(totalGrade);
@@ -75,6 +75,7 @@ const createNormalExam = asyncHandler(async (req, res) => {
     totalGrade: grade,
     startsAt: startsAt || null,
     endsAt: endsAt || null,
+    allowSkip: !!allowSkip,
     createdBy: req.user._id,
   });
 
@@ -89,7 +90,7 @@ const updateNormalExam = asyncHandler(async (req, res) => {
   let exam = await NormalExam.findById(req.params.id);
   if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
 
-  const { title, description, totalGrade, startsAt, endsAt } = req.body;
+  const { title, description, totalGrade, startsAt, endsAt, allowSkip } = req.body;
 
   if (title !== undefined) exam.title = String(title).trim();
   if (description !== undefined) exam.description = description;
@@ -98,6 +99,7 @@ const updateNormalExam = asyncHandler(async (req, res) => {
     if (!grade || grade <= 0) throw new ApiError(400, 'أدخل درجة الاختبار الكلية (مثال: 100)');
     exam.totalGrade = grade;
   }
+  if (allowSkip !== undefined) exam.allowSkip = !!allowSkip;
   if (startsAt !== undefined) exam.startsAt = startsAt || null;
   if (endsAt !== undefined) exam.endsAt = endsAt || null;
   assertValidWindow(exam.startsAt, exam.endsAt);
@@ -163,6 +165,7 @@ const getNormalResults = asyncHandler(async (req, res) => {
     studentName: r.user?.name || 'محذوف',
     username: r.user?.username || '',
     correctCount: r.correctCount,
+    skippedCount: r.skippedCount || 0,
     questionCount: r.questionCount,
     grade: r.grade,
     totalGrade: r.totalGrade,

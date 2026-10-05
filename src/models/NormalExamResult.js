@@ -7,11 +7,13 @@ const answerSchema = new mongoose.Schema(
       ref: 'NormalQuestion',
       required: true,
     },
+    // يكون فارغًا في السؤال المتروك إن كان التخطي مسموحًا
     chosenOption: {
       type: mongoose.Schema.Types.ObjectId,
-      required: true,
+      default: null,
     },
     isCorrect: { type: Boolean, required: true },
+    skipped: { type: Boolean, default: false },
   },
   { _id: false }
 );
@@ -32,6 +34,7 @@ const normalExamResultSchema = new mongoose.Schema(
     },
     answers: { type: [answerSchema], default: [] },
     correctCount: { type: Number, default: 0 },
+    skippedCount: { type: Number, default: 0 },
     questionCount: { type: Number, default: 0 },
     grade: { type: Number, default: 0 },
     totalGrade: { type: Number, default: 0 },
