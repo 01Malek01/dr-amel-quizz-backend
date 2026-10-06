@@ -19,9 +19,16 @@ name: dr-amel-quizzes
 
 services:
   mongo:
-    image: mongo:8
+    image: mongo:${DQ_MONGO_IMAGE_TAG:-8}
     container_name: dq-mongo
     restart: unless-stopped
+    environment:
+      # مونغو 8 يرفض العمل على نواة لينكس 6.19 وما بعدها حتى 7.0.13 بسبب
+      # تعارض في مكتبة tcmalloc (SERVER-121912). الحل الرسمي ترقية النواة إلى
+      # 7.0.14 أو أحدث. وإن تعذّر ذلك فاضبط في ملف البيئة:
+      #   DQ_MONGO_GLIBC_TUNABLES=glibc.pthread.rseq=0
+      # تعرف أنك بحاجة إليه إذا ظهر في سجلّ mongo: MongoDB cannot start
+      GLIBC_TUNABLES: ${DQ_MONGO_GLIBC_TUNABLES:-}
     # حدّ ذاكرة التخزين المؤقت لمحرك WiredTiger: 0.5 = 512 ميجابايت.
     # بدونه يأخذ مونغو نصف ذاكرة الخادم تقريبًا، وهو كثير على خادم صغير.
     command: ["mongod", "--wiredTigerCacheSizeGB", "${DQ_MONGO_CACHE_GB:-0.5}"]
@@ -52,7 +59,9 @@ services:
         condition: service_healthy
     environment:
       PORT: 5007
-      MONGO_URI: mongodb://mongo:27017/dr-amel-quizzes
+      # الافتراضي هو حاوية مونغو في هذا الملف. ولقاعدة بيانات مستضافة (مثل
+      # Atlas) اضبط DQ_MONGO_URI بسلسلة الاتصال، وعلّق خدمة mongo أدناه.
+      MONGO_URI: ${DQ_MONGO_URI:-mongodb://mongo:27017/dr-amel-quizzes}
       # مطلوبان — سيتوقف التشغيل برسالة واضحة إن لم تُضبطا في ملف البيئة
       JWT_SECRET: ${DQ_JWT_SECRET:?اضبط JWT_SECRET في ملف البيئة}
       ADMIN_PASSWORD: ${DQ_ADMIN_PASSWORD:?اضبط ADMIN_PASSWORD في ملف البيئة}

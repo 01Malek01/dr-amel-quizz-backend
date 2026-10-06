@@ -16,9 +16,16 @@ name: dr-amel-quizzes
 
 services:
   mongo:
-    image: mongo:8
+    image: mongo:${DQ_MONGO_IMAGE_TAG:-8}
     container_name: dq-mongo
     restart: unless-stopped
+    environment:
+      # تعارض نواة لينكس 6.19+ مع tcmalloc في مونغو 8 (SERVER-121912) — انظر
+      # docker-compose.backend.yml و DEPLOY.md. اتركه فارغًا إن كانت النواة سليمة.
+      GLIBC_TUNABLES: ${DQ_MONGO_GLIBC_TUNABLES:-}
+    # ذاكرة WiredTiger المؤقتة: 0.5 = 512 ميجابايت
+    command: ["mongod", "--wiredTigerCacheSizeGB", "${DQ_MONGO_CACHE_GB:-0.5}"]
+    mem_limit: ${DQ_MONGO_MEM_LIMIT:-1g}
     # لا تُنشر قاعدة البيانات خارج شبكة compose. أزل التعليق عن السطر التالي
     # فقط إن أردت الاتصال بها من نفس الخادم بأداة مثل mongosh أو Compass.
     # ports:
