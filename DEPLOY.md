@@ -7,26 +7,28 @@ student's browser ──HTTPS──> Vercel (Next.js site)
                  └─HTTPS──> nginx on the VPS ──> API container ──> MongoDB container
 ```
 
-Throughout, replace `203.0.113.5` with your server's IP.
+The server is `69.10.43.238`, and the API hostname used throughout is
+`69-10-43-238.sslip.io` (see step 0). Change both if the server ever moves.
 
 ## 0. HTTPS without a domain
 
 Vercel serves the site over HTTPS, and a browser on an HTTPS page refuses to
-call `http://203.0.113.5/api` (mixed content). You therefore need HTTPS on the
+call `http://69.10.43.238/api` (mixed content). You therefore need HTTPS on the
 API too, which needs a hostname, because a certificate cannot be issued for a
 bare IP.
 
-`sslip.io` solves this with no registration: **`203-0-113-5.sslip.io`** already
-resolves to `203.0.113.5`. Let's Encrypt issues a normal certificate for it.
+`sslip.io` solves this with no registration: **`69-10-43-238.sslip.io`** already
+resolves to `69.10.43.238`. Let's Encrypt issues a normal certificate for it.
 (`nip.io` is an identical alternative — try it if sslip.io ever fails.)
 
-This guide uses `203-0-113-5.sslip.io` as the API host. If you buy a domain
+This guide uses `69-10-43-238.sslip.io` as the API host. If you buy a domain
 later, point it at the IP and repeat step 6 with the new name.
 
-Check it resolves before starting:
+Verified: it resolves to 69.10.43.238 via Google's resolver. Confirm from your own
+machine with:
 
 ```bash
-ping -c1 203-0-113-5.sslip.io
+nslookup 69-10-43-238.sslip.io
 ```
 
 If you cannot or will not use any hostname, skip to **Plan B** at the end.
@@ -195,7 +197,7 @@ sudo nano /etc/nginx/sites-available/dq-api
 ```nginx
 server {
     listen 80;
-    server_name 203-0-113-5.sslip.io;
+    server_name 69-10-43-238.sslip.io;
 
     # الرفع محدود بـ 5MB في التطبيق
     client_max_body_size 6m;
@@ -224,13 +226,13 @@ sudo systemctl reload nginx
 ```
 
 ```bash
-curl http://203-0-113-5.sslip.io/api/health
+curl http://69-10-43-238.sslip.io/api/health
 ```
 
 Now the certificate:
 
 ```bash
-sudo certbot --nginx -d 203-0-113-5.sslip.io
+sudo certbot --nginx -d 69-10-43-238.sslip.io
 ```
 
 Choose redirect when asked. certbot rewrites the file to listen on 443 and
@@ -238,13 +240,13 @@ renews by itself; confirm with:
 
 ```bash
 sudo certbot renew --dry-run
-curl https://203-0-113-5.sslip.io/api/health
+curl https://69-10-43-238.sslip.io/api/health
 ```
 
 The API base URL for the site is now:
 
 ```
-https://203-0-113-5.sslip.io/api
+https://69-10-43-238.sslip.io/api
 ```
 
 ## 7. The site on Vercel
@@ -255,7 +257,7 @@ https://203-0-113-5.sslip.io/api
 3. **Environment Variables** → add, for Production, Preview and Development:
 
    ```
-   NEXT_PUBLIC_API_URL = https://203-0-113-5.sslip.io/api
+   NEXT_PUBLIC_API_URL = https://69-10-43-238.sslip.io/api
    ```
 
 4. Deploy, and note the domain you get, e.g.
@@ -285,8 +287,8 @@ docker compose -f docker-compose.backend.yml --env-file .env.docker up -d
 Verify the header is sent for your domain and withheld for others:
 
 ```bash
-curl -s -I -H "Origin: https://dr-amel-quizzes.vercel.app" https://203-0-113-5.sslip.io/api/health | grep -i access-control
-curl -s -I -H "Origin: https://evil.example.com" https://203-0-113-5.sslip.io/api/health | grep -i access-control
+curl -s -I -H "Origin: https://dr-amel-quizzes.vercel.app" https://69-10-43-238.sslip.io/api/health | grep -i access-control
+curl -s -I -H "Origin: https://evil.example.com" https://69-10-43-238.sslip.io/api/health | grep -i access-control
 ```
 
 The first prints the header, the second prints nothing. If a page later shows
@@ -377,8 +379,8 @@ In the **frontend** repo, add `vercel.json`:
 ```json
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "http://203.0.113.5/api/:path*" },
-    { "source": "/uploads/:path*", "destination": "http://203.0.113.5/uploads/:path*" }
+    { "source": "/api/:path*", "destination": "http://69.10.43.238/api/:path*" },
+    { "source": "/uploads/:path*", "destination": "http://69.10.43.238/uploads/:path*" }
   ]
 }
 ```
