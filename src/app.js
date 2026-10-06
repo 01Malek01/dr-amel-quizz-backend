@@ -27,9 +27,36 @@ const { notFound, errorHandler } = require('./middleware/error');
 
 const app = express();
 
+// CLIENT_URL يقبل عنوانًا واحدًا أو عدة عناوين مفصولة بفاصلة، ويقبل النجمة
+// بدلًا من النطاق الفرعي مثل https://*.vercel.app لتغطية نشر المعاينة.
+// تركه فارغًا يسمح لكل العناوين (مناسب للتطوير فقط).
+const originPatterns = (process.env.CLIENT_URL || '')
+  .split(',')
+  .map((value) => value.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
+const toOriginMatcher = (pattern) => {
+  if (pattern === '*') return () => true;
+  if (!pattern.includes('*')) return (origin) => origin === pattern;
+
+  const source = pattern
+    .split('*')
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[^.]+');
+  const regex = new RegExp(`^${source}$`);
+  return (origin) => regex.test(origin);
+};
+
+const originMatchers = originPatterns.map(toOriginMatcher);
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || '*',
+    origin(origin, callback) {
+      // طلب بلا Origin (curl، فحص الصحة، nginx) لا يخضع لقيود المتصفح
+      if (!origin || originMatchers.length === 0) return callback(null, true);
+      const normalized = origin.replace(/\/+$/, '');
+      callback(null, originMatchers.some((matches) => matches(normalized)));
+    },
     credentials: true,
   })
 );

@@ -4,8 +4,9 @@ Express + MongoDB (Mongoose) API for the quiz platform. Serves the admin
 dashboard and the student-facing exams, scales and results.
 
 The frontend lives in a separate repository
-([dr-amel-quizz-frontend](https://github.com/01Malek01/dr-amel-quizz-frontend));
-the Docker compose file in **this** repo builds and runs both together.
+([dr-amel-quizz-frontend](https://github.com/01Malek01/dr-amel-quizz-frontend)).
+This repo carries two Docker compose files: one for the API and MongoDB alone
+(site on Vercel) and one that runs both apps on a single server.
 
 ## Running locally
 
@@ -116,12 +117,100 @@ same helpers.
 
 ## Deployment with Docker
 
-One compose file in this repo runs the whole stack: MongoDB, the API and the
-Next.js site. Both apps are published **only on `127.0.0.1`**, so nginx installed
-directly on the host (not in a container) is what terminates TLS and proxies to
-them.
+Two compose files, pick one:
 
-### The two repos must sit side by side
+| File | Runs | Use when |
+| ---- | ---- | -------- |
+| `docker-compose.backend.yml` | MongoDB + API | the site is hosted on Vercel |
+| `docker-compose.yml` | MongoDB + API + Next.js site | everything on one VPS |
+
+Either way the API is published **only on `127.0.0.1`**, so nginx installed
+directly on the host (not in a container) is what terminates TLS and proxies to
+it. MongoDB is never published on a port: only the API reaches it, over the
+private compose network.
+
+Both files use the same project name and the same volumes, so switching between
+them keeps the database and the uploaded images.
+
+### Configure (both options)
+
+```bash
+cp .env.docker.example .env.docker
+```
+
+Fill in `.env.docker` — `DQ_JWT_SECRET` and `DQ_ADMIN_PASSWORD` are mandatory and
+the stack refuses to start without them:
+
+```bash
+openssl rand -base64 48
+```
+
+> **Always pass `--env-file .env.docker`.** The compose variables are prefixed
+> `DQ_` precisely so that a forgotten flag fails loudly instead of silently
+> picking up the development values in `backend/.env`.
+
+`DQ_CLIENT_URL` is the list of origins the browser may call the API from.
+Several are separated by commas, and `*` stands for one subdomain level, which
+covers Vercel's preview deployments:
+
+```
+DQ_CLIENT_URL=https://dr-amel-quizzes.vercel.app,https://*.vercel.app
+```
+
+An origin that is not listed gets no CORS header and the browser blocks it, so a
+missing entry shows up as "failed to fetch" in the site rather than as a server
+error. Leaving it empty allows every origin — never do that on the internet.
+
+## Option A — backend + MongoDB, site on Vercel
+
+```bash
+docker compose -f docker-compose.backend.yml --env-file .env.docker up -d --build
+```
+
+```bash
+docker compose -f docker-compose.backend.yml --env-file .env.docker ps
+```
+
+Both services should read `healthy`, with the API shown as
+`127.0.0.1:5007->5007`. Every command further down works the same with
+`-f docker-compose.backend.yml` added.
+
+### On the Vercel side
+
+Set one environment variable in the Vercel project and redeploy:
+
+```
+NEXT_PUBLIC_API_URL=https://api.example.com/api
+```
+
+It is compiled into the browser bundle, so it only takes effect on a new build.
+Uploaded question images are served by this same API host (`/uploads/...`), which
+the site derives from this variable — so it must be the public HTTPS domain,
+never `127.0.0.1`.
+
+### nginx for the API domain
+
+```nginx
+server {
+    server_name api.example.com;
+
+    client_max_body_size 6m;   # الرفع محدود بـ 5MB في التطبيق
+
+    location / {
+        proxy_pass http://127.0.0.1:5007;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Then issue the certificate, e.g. `certbot --nginx -d api.example.com`. CORS is
+handled by the app itself, so do not add `add_header Access-Control-Allow-Origin`
+in nginx — two of those headers break every browser request.
+
+## Option B — everything on one server
 
 `docker-compose.yml` builds the frontend from `../frontend`, so clone both into
 the same parent directory — the build fails otherwise:
@@ -137,33 +226,8 @@ git clone https://github.com/01Malek01/dr-amel-quizz-backend.git backend
 git clone https://github.com/01Malek01/dr-amel-quizz-frontend.git frontend
 ```
 
-### Configure
-
-```bash
-cp .env.docker.example .env.docker
-```
-
-Fill in `.env.docker` — `DQ_JWT_SECRET` and `DQ_ADMIN_PASSWORD` are mandatory and
-the stack refuses to start without them:
-
-```bash
-openssl rand -base64 48
-```
-
-Then build and start:
-
 ```bash
 docker compose --env-file .env.docker up -d --build
-```
-
-> **Always pass `--env-file .env.docker`.** The compose variables are prefixed
-> `DQ_` precisely so that a forgotten flag fails loudly instead of silently
-> picking up the development values in `backend/.env`.
-
-Check it came up:
-
-```bash
-docker compose --env-file .env.docker ps
 ```
 
 All three services should read `healthy`, with ports shown as
@@ -180,46 +244,6 @@ docker compose --env-file .env.docker up -d --build frontend
 ```
 
 For a VPS behind nginx that is your public URL, e.g. `https://example.com/api`.
-
-### What is preserved
-
-Three named volumes survive `docker compose down`, rebuilds and image upgrades:
-
-| Volume | Holds |
-| ------ | ----- |
-| `uploads_data` | question and answer images uploaded by the admin (`/app/uploads`) |
-| `mongo_data` | the whole database (`/data/db`) |
-| `mongo_config` | MongoDB's internal config (`/data/configdb`) |
-
-Verified: after `docker compose down` and `up` again, an uploaded image still
-served 200 and the database rows were intact.
-
-`docker compose down -v` **deletes all three** — it is the one command to avoid
-on a live server.
-
-Back them up with:
-
-```bash
-docker run --rm -v dr-amel-quizzes_uploads_data:/data -v "$PWD:/backup" busybox tar czf /backup/uploads-backup.tar.gz -C /data .
-```
-
-```bash
-docker exec dq-mongo mongodump --archive=/tmp/db.archive --db=dr-amel-quizzes && docker cp dq-mongo:/tmp/db.archive ./db-backup.archive
-```
-
-### Everyday commands
-
-```bash
-docker compose --env-file .env.docker logs -f backend
-```
-
-```bash
-docker compose --env-file .env.docker restart backend
-```
-
-```bash
-docker compose --env-file .env.docker up -d --build
-```
 
 ### nginx on the host
 
@@ -255,3 +279,60 @@ server {
 
 Set `DQ_CLIENT_URL` to `https://example.com` so CORS matches, and
 `DQ_NEXT_PUBLIC_API_URL` to `https://example.com/api`, then rebuild the frontend.
+
+## MongoDB memory
+
+The database container is capped at **512 MB of WiredTiger cache** and 1 GB of
+container memory in `docker-compose.backend.yml`. Without a cap MongoDB takes
+roughly half the host's RAM, which is too much for a small VPS. Both are
+adjustable in `.env.docker`:
+
+```
+DQ_MONGO_CACHE_GB=0.5
+DQ_MONGO_MEM_LIMIT=1g
+```
+
+Verified on this image: `db.serverStatus().wiredTiger.cache["maximum bytes
+configured"]` reads 536870912.
+
+## What is preserved
+
+Three named volumes survive `docker compose down`, rebuilds and image upgrades:
+
+| Volume | Holds |
+| ------ | ----- |
+| `uploads_data` | question and answer images uploaded by the admin (`/app/uploads`) |
+| `mongo_data` | the whole database (`/data/db`) |
+| `mongo_config` | MongoDB's internal config (`/data/configdb`) |
+
+Verified: after `docker compose down` and `up` again, an uploaded image still
+served 200 and the database rows were intact.
+
+`docker compose down -v` **deletes all three** — it is the one command to avoid
+on a live server.
+
+Back them up with:
+
+```bash
+docker run --rm -v dr-amel-quizzes_uploads_data:/data -v "$PWD:/backup" busybox tar czf /backup/uploads-backup.tar.gz -C /data .
+```
+
+```bash
+docker exec dq-mongo mongodump --archive=/tmp/db.archive --db=dr-amel-quizzes && docker cp dq-mongo:/tmp/db.archive ./db-backup.archive
+```
+
+## Everyday commands
+
+```bash
+docker compose -f docker-compose.backend.yml --env-file .env.docker logs -f backend
+```
+
+```bash
+docker compose -f docker-compose.backend.yml --env-file .env.docker restart backend
+```
+
+Deploy a new version after `git pull`:
+
+```bash
+docker compose -f docker-compose.backend.yml --env-file .env.docker up -d --build
+```
