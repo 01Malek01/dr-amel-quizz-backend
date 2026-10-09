@@ -383,10 +383,10 @@ cat ~/.ssh/github_actions
 The user must be able to run `docker` without `sudo` (step 2 covers that), since
 the workflow has no password to give.
 
-The frontend repo has the same workflow, but **manual-only** (Actions → Run
-workflow) because Vercel already deploys the site on every push; a push-triggered
-VPS deploy would fail every time. Its header explains how to enable the trigger
-if the site ever moves to the VPS.
+The frontend repo has no workflow: Vercel builds and deploys the site itself on
+every push to `main`. If the site ever moves onto this server, it needs one of
+its own — rebuilding the `frontend` service from this repo's
+`docker-compose.yml`, with `DQ_NEXT_PUBLIC_API_URL` set before the build.
 
 Logs when something misbehaves:
 
