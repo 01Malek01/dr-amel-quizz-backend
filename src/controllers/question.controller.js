@@ -1,5 +1,6 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { persistQuestions, isObjectId } = require('../utils/persistQuestions');
 const Exam = require('../models/Exam');
 const Question = require('../models/Question');
 
@@ -11,26 +12,23 @@ const getQuestions = asyncHandler(async (req, res) => {
   res.json({ success: true, data: questions });
 });
 
-const setQuestions = asyncHandler(async (req, res) => {
-  const exam = await Exam.findById(req.params.id);
-  if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
+const buildOptions = (raw, questionNumber) => {
+  const seenIds = new Set();
+  const options = [];
 
-  const questions = Array.isArray(req.body.questions) ? req.body.questions : [];
+  (raw.options || []).forEach((o, i) => {
+    const text = String(o.text || '').trim();
+    const image = o.image || null;
 
-  if (questions.length === 0) {
-    await Question.deleteMany({ exam: exam._id });
-    return res.json({ success: true, data: [] });
-  }
+    // صندوق إجابة لم يُملأ أصلًا: يُهمل بهدوء بدل رفض حفظ الاختبار كله
+    if (!text && !image) return;
+    if (!text) {
+      throw new ApiError(400, `السؤال ${questionNumber}: الإجابة ${i + 1} تحتاج إلى نص`);
+    }
 
-  const saved = [];
-
-  for (const [index, raw] of questions.entries()) {
-    const text = String(raw.text || '').trim();
-    if (!text) throw new ApiError(400, `السؤال ${index + 1} بدون نص`);
-
-    const options = (raw.options || []).map((o) => ({
-      text: String(o.text || '').trim(),
-      image: o.image || null,
+    const option = {
+      text,
+      image,
       isCorrect: !!o.isCorrect,
       correctExplanation: o.correctExplanation ? String(o.correctExplanation).trim() : '',
       feedback: {
@@ -39,40 +37,50 @@ const setQuestions = asyncHandler(async (req, res) => {
         explanation: o.feedback?.explanation || '',
         custom: o.feedback?.custom || '',
       },
-    }));
-
-    if (options.length < 2) {
-      throw new ApiError(400, `السؤال ${index + 1} يحتاج إلى إجابتين على الأقل`);
-    }
-    const correctCount = options.filter((o) => o.isCorrect).length;
-    if (correctCount !== 1) {
-      throw new ApiError(400, `السؤال ${index + 1} يجب أن يحتوي على إجابة صحيحة واحدة فقط`);
-    }
-
-    const doc = {
-      exam: exam._id,
-      order: index,
-      text,
-      image: raw.image || null,
-      options,
     };
 
-    if (raw._id) {
-      if (String(raw._id).length === 24) {
-        await Question.updateOne({ _id: raw._id, exam: exam._id }, doc);
-        saved.push(await Question.findById(raw._id));
-        continue;
-      }
+    // الإبقاء على معرّف الإجابة يحفظ صلة محاولات الطلاب السابقة بما اختاروه
+    const id = String(o._id || '');
+    if (isObjectId(id) && !seenIds.has(id)) {
+      option._id = id;
+      seenIds.add(id);
     }
-    const created = await Question.create(doc);
-    saved.push(created);
-  }
 
-  const keptIds = saved.map((q) => q._id);
-  await Question.deleteMany({ exam: exam._id, _id: { $nin: keptIds } });
+    options.push(option);
+  });
 
-  const ordered = await Question.find({ exam: exam._id }).sort({ order: 1 });
-  res.json({ success: true, data: ordered });
+  return options;
+};
+
+const setQuestions = asyncHandler(async (req, res) => {
+  const exam = await Exam.findById(req.params.id);
+  if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
+
+  const questions = Array.isArray(req.body.questions) ? req.body.questions : [];
+
+  const data = await persistQuestions({
+    Model: Question,
+    examId: exam._id,
+    questions,
+    buildDoc: (raw, index) => {
+      const number = index + 1;
+      const text = String(raw.text || '').trim();
+      if (!text) throw new ApiError(400, `السؤال ${number} بدون نص`);
+
+      const options = buildOptions(raw, number);
+      if (options.length < 2) {
+        throw new ApiError(400, `السؤال ${number} يحتاج إلى إجابتين على الأقل`);
+      }
+      const correctCount = options.filter((o) => o.isCorrect).length;
+      if (correctCount !== 1) {
+        throw new ApiError(400, `السؤال ${number} يجب أن يحتوي على إجابة صحيحة واحدة فقط`);
+      }
+
+      return { exam: exam._id, order: index, text, image: raw.image || null, options };
+    },
+  });
+
+  res.json({ success: true, data });
 });
 
 module.exports = { getQuestions, setQuestions };

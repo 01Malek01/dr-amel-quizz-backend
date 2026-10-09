@@ -3,6 +3,7 @@ const { generateExamCode } = require('../utils/code');
 const NormalExam = require('../models/NormalExam');
 const NormalQuestion = require('../models/NormalQuestion');
 const NormalExamResult = require('../models/NormalExamResult');
+const { persistQuestions, isObjectId } = require('../utils/persistQuestions');
 
 const RETAKE_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1000;
 
@@ -90,45 +91,48 @@ const sanitizeQuestions = (questions) =>
     })),
   }));
 
-const saveQuestions = async (examId, questions) => {
-  if (!Array.isArray(questions) || questions.length === 0) {
-    await NormalQuestion.deleteMany({ exam: examId });
-    return [];
-  }
+const saveQuestions = async (examId, questions) =>
+  persistQuestions({
+    Model: NormalQuestion,
+    examId,
+    questions: Array.isArray(questions) ? questions : [],
+    buildDoc: (raw, index) => {
+      const number = index + 1;
+      const text = String(raw.text || '').trim();
+      if (!text) throw new ApiError(400, `السؤال ${number} بدون نص`);
 
-  const saved = [];
-  for (const [index, raw] of questions.entries()) {
-    const text = String(raw.text || '').trim();
-    if (!text) throw new ApiError(400, `السؤال ${index + 1} بدون نص`);
+      const seenIds = new Set();
+      const options = [];
+      (raw.options || []).forEach((o, i) => {
+        const optionText = String(o.text || '').trim();
+        const image = o.image || null;
 
-    const options = (raw.options || []).map((o) => ({
-      text: String(o.text || '').trim(),
-      image: o.image || null,
-      isCorrect: !!o.isCorrect,
-    }));
+        // صندوق إجابة لم يُملأ أصلًا يُهمل، بدل رفض حفظ الاختبار كله
+        if (!optionText && !image) return;
+        if (!optionText) {
+          throw new ApiError(400, `السؤال ${number}: الإجابة ${i + 1} تحتاج إلى نص`);
+        }
 
-    if (options.length < 2) {
-      throw new ApiError(400, `السؤال ${index + 1} يحتاج إلى إجابتين على الأقل`);
-    }
-    const correctCount = options.filter((o) => o.isCorrect).length;
-    if (correctCount !== 1) {
-      throw new ApiError(400, `السؤال ${index + 1} يجب أن يحتوي على إجابة صحيحة واحدة فقط`);
-    }
+        const option = { text: optionText, image, isCorrect: !!o.isCorrect };
+        const id = String(o._id || '');
+        if (isObjectId(id) && !seenIds.has(id)) {
+          option._id = id;
+          seenIds.add(id);
+        }
+        options.push(option);
+      });
 
-    const doc = { exam: examId, order: index, text, image: raw.image || null, options };
+      if (options.length < 2) {
+        throw new ApiError(400, `السؤال ${number} يحتاج إلى إجابتين على الأقل`);
+      }
+      const correctCount = options.filter((o) => o.isCorrect).length;
+      if (correctCount !== 1) {
+        throw new ApiError(400, `السؤال ${number} يجب أن يحتوي على إجابة صحيحة واحدة فقط`);
+      }
 
-    if (raw._id && String(raw._id).length === 24) {
-      await NormalQuestion.updateOne({ _id: raw._id, exam: examId }, doc);
-      saved.push(await NormalQuestion.findById(raw._id));
-      continue;
-    }
-    saved.push(await NormalQuestion.create(doc));
-  }
-
-  const keptIds = saved.map((q) => q._id);
-  await NormalQuestion.deleteMany({ exam: examId, _id: { $nin: keptIds } });
-  return NormalQuestion.find({ exam: examId }).sort({ order: 1 });
-};
+      return { exam: examId, order: index, text, image: raw.image || null, options };
+    },
+  });
 
 const fmtArDate = (d) =>
   new Date(d).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' });
