@@ -333,7 +333,7 @@ run on this server.
 
 ## 10. Deploying updates
 
-API:
+API, by hand:
 
 ```bash
 cd ~/backend && git pull
@@ -341,6 +341,52 @@ docker compose -f docker-compose.backend.yml --env-file .env.docker up -d --buil
 ```
 
 Site: push to the frontend repo's main branch — Vercel builds and deploys it.
+
+### Automatic deployment from GitHub
+
+`.github/workflows/deploy.yml` in the backend repo deploys on every push to
+`main`: it connects over SSH, resets the checkout to `origin/main`, rebuilds the
+containers, waits for `/api/health` to answer, and prunes old images. It fails
+the run if the health check never passes, so a broken deploy is visible in the
+Actions tab instead of silent.
+
+Note that it runs `git reset --hard origin/main`, which discards anything edited
+directly on the server inside the repository. `.env.docker` is untracked, so it
+is untouched.
+
+Create a key for it on the server (no passphrase, used only by Actions):
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions" -f ~/.ssh/github_actions -N ""
+```
+
+```bash
+cat ~/.ssh/github_actions.pub >> ~/.ssh/authorized_keys
+```
+
+Then in the repo, **Settings → Secrets and variables → Actions**, add:
+
+| Secret | Value |
+| ------ | ----- |
+| `VPS_HOST` | `69.10.43.238` |
+| `VPS_USERNAME` | the deploy user, e.g. `deploy` |
+| `VPS_SSH_KEY` | the **private** key: the whole of `~/.ssh/github_actions` |
+| `VPS_PORT` | only if SSH is not on 22 |
+| `VPS_APP_DIR` | only if the repo is not at `~/backend` |
+
+Print the private key to copy it, then clear your terminal:
+
+```bash
+cat ~/.ssh/github_actions
+```
+
+The user must be able to run `docker` without `sudo` (step 2 covers that), since
+the workflow has no password to give.
+
+The frontend repo has the same workflow, but **manual-only** (Actions → Run
+workflow) because Vercel already deploys the site on every push; a push-triggered
+VPS deploy would fail every time. Its header explains how to enable the trigger
+if the site ever moves to the VPS.
 
 Logs when something misbehaves:
 

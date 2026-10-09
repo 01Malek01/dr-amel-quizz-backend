@@ -1,0 +1,70 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+  # تشغيل يدوي من تبويب Actions عند الحاجة
+  workflow_dispatch:
+
+# نشرٌ واحد في كل مرة: دفعتان متتاليتان لا تتسابقان على نفس الخادم
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Execute deployment commands via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          # يوقف السكربت عند أول خطأ ويفشل الخطوة بدل أن ينجح زورًا
+          script_stop: true
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+
+            APP_DIR="${{ secrets.VPS_APP_DIR || '$HOME/backend' }}"
+            # لو ضُبط السرّ بصيغة ~/backend فالتنصيص يمنع توسيع ~
+            APP_DIR="${APP_DIR/#\~/$HOME}"
+            COMPOSE="docker compose -f docker-compose.backend.yml --env-file .env.docker"
+
+            cd "$APP_DIR"
+
+            # ملف البيئة لا يوجد في المستودع، وبدونه يتوقف التشغيل
+            test -f .env.docker || { echo "missing .env.docker in $APP_DIR"; exit 1; }
+
+            # المنفذ من ملف البيئة نفسه لا من تخمين
+            PORT=$(sed -n 's/^DQ_BACKEND_PORT=//p' .env.docker | tail -1 | tr -d '\r')
+            PORT=${PORT:-5007}
+
+            git fetch --prune origin main
+            git reset --hard origin/main
+
+            # البناء ثم التشغيل: التبعيات تُثبّت داخل الصورة، فلا npm install هنا
+            $COMPOSE up -d --build
+
+            # التحقق من أن الخادم يرد فعلًا قبل اعتبار النشر ناجحًا
+            for i in $(seq 1 30); do
+              if curl -fsS "http://127.0.0.1:$PORT/api/health" > /dev/null; then
+                echo "health check passed"
+                break
+              fi
+              if [ "$i" = "30" ]; then
+                echo "health check failed — last 50 log lines:"
+                $COMPOSE logs --tail 50 backend
+                exit 1
+              fi
+              sleep 2
+            done
+
+            $COMPOSE ps
+
+            # الصور القديمة تمتلئ بها أقراص الخوادم الصغيرة
+            docker image prune -f
