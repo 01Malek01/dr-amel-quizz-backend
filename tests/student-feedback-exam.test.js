@@ -517,3 +517,115 @@ describe('فتح الاختبار لطالب متأخر', () => {
     assert.equal(res.status, 409);
   });
 });
+
+describe('مقياس الفائدة المدركة لا يمكن تجاوزه', () => {
+  let q0;
+  let q1;
+
+  before(async () => {
+    await makeFeedbackExam({ questionCount: 2, attemptsPerQuestion: 2, code: 'RATEEX1' });
+    const start = await request('/exam/RATEEX1/start', {
+      method: 'POST',
+      token: users.studentToken,
+    });
+    [q0, q1] = start.body.data.questions;
+  });
+
+  test('بداية الجلسة: كل الأسئلة بلا محاولات ولا تقييم', async () => {
+    const start = await request('/exam/RATEEX1/start', {
+      method: 'POST',
+      token: users.studentToken,
+    });
+    const { progress } = start.body.data;
+    assert.equal(progress.length, 2);
+    for (const p of progress) {
+      assert.equal(p.attempts, 0);
+      assert.equal(p.rated, false);
+      assert.equal(p.isCorrect, false);
+    }
+  });
+
+  test('إجابة صحيحة ثم إعادة تحميل قبل التقييم: الجلسة تُظهر أن التقييم ناقص', async () => {
+    await request('/exam/RATEEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q0._id, optionId: q0.options.find((o) => o.isCorrect)._id },
+    });
+
+    // ما تفعله الصفحة عند إعادة التحميل
+    const resumed = await request('/exam/RATEEX1/start', {
+      method: 'POST',
+      token: users.studentToken,
+    });
+    const p0 = resumed.body.data.progress[0];
+    assert.equal(p0.isCorrect, true);
+    assert.equal(p0.rated, false, 'السؤال محسوم لكن تقييمه ناقص — يجب أن يعرف العميل ذلك');
+
+    // إعادة الإجابة عن سؤال محسوم مرفوضة، فلا طريق لتجاوزه إلا بتقييمه
+    const again = await request('/exam/RATEEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q0._id, optionId: q0.options.find((o) => o.isCorrect)._id },
+    });
+    assert.equal(again.status, 400);
+  });
+
+  test('الإنهاء مرفوض ما دام سؤال مُجاب بلا تقييم', async () => {
+    await request('/exam/RATEEX1/post-survey', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { answers: [3, 3, 3, 3, 3, 3, 3, 3] },
+    });
+    const res = await request('/exam/RATEEX1/complete', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { totalTimeSeconds: 10 },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.message, /مقياس الفائدة المدركة/);
+  });
+
+  test('آخر تغذية راجعة لإجابة خاطئة تعود عند الاستئناف', async () => {
+    const wrong = q1.options.find((o) => !o.isCorrect);
+    await request('/exam/RATEEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q1._id, optionId: wrong._id },
+    });
+
+    const resumed = await request('/exam/RATEEX1/start', {
+      method: 'POST',
+      token: users.studentToken,
+    });
+    const p1 = resumed.body.data.progress[1];
+    assert.equal(p1.attempts, 1);
+    assert.equal(p1.attemptsLeft, 1);
+    assert.equal(p1.exhausted, false);
+    assert.ok(p1.lastFeedback, 'التغذية الراجعة متاحة لإعادة عرضها');
+    assert.equal(p1.lastFeedback.optionId, String(wrong._id));
+    assert.ok(p1.lastFeedback.content.length > 0);
+  });
+
+  test('بعد تقييم كل سؤال مُجاب يُقبل الإنهاء', async () => {
+    for (const q of [q0, q1]) {
+      const r = await request('/feedback-rating/RATEEX1', {
+        method: 'POST',
+        token: users.studentToken,
+        body: { questionId: q._id, item1: 4, item2: 4, item3: 4 },
+      });
+      assert.ok(r.status < 300, r.body.message);
+    }
+    const resumed = await request('/exam/RATEEX1/start', {
+      method: 'POST',
+      token: users.studentToken,
+    });
+    assert.ok(resumed.body.data.progress.every((p) => p.rated));
+
+    const res = await request('/exam/RATEEX1/complete', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { totalTimeSeconds: 10 },
+    });
+    assert.equal(res.status, 200, res.body.message);
+  });
+});

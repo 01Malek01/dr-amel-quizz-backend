@@ -84,6 +84,54 @@ const start = asyncHandler(async (req, res) => {
 
   const postSurveyDone = !!(await PostExamSurvey.exists({ session: session._id }));
 
+  // حالة كل سؤال في الجلسة، ليستأنف الطالب من حيث توقف إن أعاد تحميل الصفحة.
+  // بدونها تبدأ الصفحة من السؤال الأول، فيرفض الخادم إعادة إجابة ما حُسم،
+  // وتنتقل الصفحة دون تقييم — ثم يرفض الإنهاء لغياب التقييم فيعلق الطالب.
+  const ratedSet = new Set(ratings.map((r) => String(r.question)));
+  const detailByQuestion = new Map(
+    (session.details || [])
+      .filter((d) => d.question)
+      .map((d) => [String(d.question), d])
+  );
+  const lastWrongByQuestion = new Map();
+  const wrongAttempts = await Attempt.find({ session: session._id, isCorrect: false }).sort({
+    createdAt: 1,
+  });
+  for (const a of wrongAttempts) lastWrongByQuestion.set(String(a.question), a);
+
+  const progress = questions.map((q) => {
+    const id = String(q._id);
+    const detail = detailByQuestion.get(id);
+    const attempts = detail?.attempts || 0;
+    const isCorrect = !!detail?.isCorrect;
+    const exhausted = !isCorrect && attempts >= exam.attemptsPerQuestion;
+
+    // التغذية الراجعة لآخر إجابة خاطئة، لإعادة عرضها كما رآها الطالب
+    let lastFeedback = null;
+    const lastWrong = lastWrongByQuestion.get(id);
+    if (lastWrong && !isCorrect) {
+      const option = q.options.id(lastWrong.optionId);
+      if (option) {
+        lastFeedback = {
+          optionId: String(lastWrong.optionId),
+          type: lastWrong.feedbackType,
+          label: FEEDBACK_TYPE_LABELS[lastWrong.feedbackType],
+          content: option.feedback?.[lastWrong.feedbackType] || '',
+        };
+      }
+    }
+
+    return {
+      questionId: q._id,
+      attempts,
+      attemptsLeft: Math.max(exam.attemptsPerQuestion - attempts, 0),
+      isCorrect,
+      exhausted,
+      rated: ratedSet.has(id),
+      lastFeedback,
+    };
+  });
+
   const sanitized = questions.map((q) => ({
     _id: q._id,
     order: q.order,
@@ -110,6 +158,7 @@ const start = asyncHandler(async (req, res) => {
       questionCount: sanitized.length,
       questions: sanitized,
       ratedQuestions: ratings.map((r) => r.question),
+      progress,
       // المقياس البعدي: إلزامي بعد آخر سؤال وقبل عرض النتيجة
       postSurvey: {
         title: `المقياس البعدي — ${PREBUILT_SURVEY.title}`,
