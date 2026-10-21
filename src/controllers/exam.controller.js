@@ -50,12 +50,19 @@ const getExam = asyncHandler(async (req, res) => {
     .populate({ path: 'lateAccessUsers', select: 'name username' });
   if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
 
-  const questions = await Question.find({ exam: exam._id }).sort({ order: 1 });
+  const [questions, completedCount, inProgressCount] = await Promise.all([
+    Question.find({ exam: exam._id }).sort({ order: 1 }),
+    // عدد من أنهوا الاختبار ومن بدؤوه دون إنهاء، لعرضهما أعلى صفحة الاختبار
+    Session.countDocuments({ exam: exam._id, status: 'completed' }),
+    Session.countDocuments({ exam: exam._id, status: 'in-progress' }),
+  ]);
 
   res.json({
     success: true,
     data: {
       ...exam.toObject(),
+      completedCount,
+      inProgressCount,
       topicTitle: exam.topic?.title || 'محذوف',
       chapterTitle: exam.topic?.chapter?.title || '—',
       link: exam.isPublished && exam.code ? `/exam/${exam.code}` : null,

@@ -629,3 +629,56 @@ describe('مقياس الفائدة المدركة لا يمكن تجاوزه', 
     assert.equal(res.status, 200, res.body.message);
   });
 });
+
+describe('عدد الطلاب في صفحة الاختبار', () => {
+  let counted;
+
+  before(async () => {
+    counted = await makeFeedbackExam({ questionCount: 1, attemptsPerQuestion: 2, code: 'COUNTEX1' });
+  });
+
+  const countsOf = async () => {
+    const res = await request(`/exams/${counted.exam._id}`, { token: users.adminToken });
+    assert.equal(res.status, 200, res.body.message);
+    return { done: res.body.data.completedCount, started: res.body.data.inProgressCount };
+  };
+
+  test('قبل أي طالب: صفر وصفر', async () => {
+    assert.deepEqual(await countsOf(), { done: 0, started: 0 });
+  });
+
+  test('طالب بدأ ولم يُنهِ يُعدّ في «بدأ» لا في «أنهى»', async () => {
+    await request('/exam/COUNTEX1/start', { method: 'POST', token: users.studentToken });
+    assert.deepEqual(await countsOf(), { done: 0, started: 1 });
+  });
+
+  test('بعد الإنهاء ينتقل إلى «أنهى»', async () => {
+    const start = await request('/exam/COUNTEX1/start', {
+      method: 'POST',
+      token: users.studentToken,
+    });
+    const [q] = start.body.data.questions;
+    await request('/exam/COUNTEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q._id, optionId: q.options.find((o) => o.isCorrect)._id },
+    });
+    await request('/feedback-rating/COUNTEX1', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q._id, item1: 5, item2: 5, item3: 5 },
+    });
+    await request('/exam/COUNTEX1/post-survey', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { answers: [4, 4, 4, 4, 4, 4, 4, 4] },
+    });
+    const done = await request('/exam/COUNTEX1/complete', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { totalTimeSeconds: 20 },
+    });
+    assert.equal(done.status, 200, done.body.message);
+    assert.deepEqual(await countsOf(), { done: 1, started: 0 });
+  });
+});
