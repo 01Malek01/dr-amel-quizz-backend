@@ -21,7 +21,7 @@ const findOpenExam = async (code, user) => {
 };
 
 const CLOSED_MESSAGE =
-  'الاختبار غير متاح حاليًا. تحقق من الرابط، وإن كان المسؤول قد فتحه لك فسجّل الدخول بحسابك ثم افتح الرابط مرة أخرى.';
+  'الاختبار غير متاح حاليًا. تحقق من الرابط، وإن كان أستاذك قد فتحه لك فسجّل الدخول برقمك الوطني.';
 
 const getMeta = asyncHandler(async (req, res) => {
   const exam = await findOpenExam(req.params.code, req.user);
