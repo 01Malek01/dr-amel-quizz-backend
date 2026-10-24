@@ -682,3 +682,103 @@ describe('عدد الطلاب في صفحة الاختبار', () => {
     assert.deepEqual(await countsOf(), { done: 1, started: 0 });
   });
 });
+
+describe('حذف سجل طالب في اختبار تغذية راجعة', () => {
+  let resetExam;
+  let sessionId;
+
+  // يُكمل الطالب الاختبار كاملًا: إجابة، تقييم، مقياس بعدي، إنهاء
+  const finishExam = async () => {
+    const start = await request('/exam/RESETEX1/start', { method: 'POST', token: users.studentToken });
+    assert.equal(start.status, 200, start.body.message);
+    const [q] = start.body.data.questions;
+    await request('/exam/RESETEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q._id, optionId: q.options.find((o) => o.isCorrect)._id },
+    });
+    const rated = await request('/feedback-rating/RESETEX1', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q._id, item1: 5, item2: 4, item3: 3 },
+    });
+    assert.ok(rated.status < 300, rated.body.message);
+    await request('/exam/RESETEX1/post-survey', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { answers: [4, 4, 4, 4, 4, 4, 4, 4] },
+    });
+    const done = await request('/exam/RESETEX1/complete', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { totalTimeSeconds: 30 },
+    });
+    assert.equal(done.status, 200, done.body.message);
+  };
+
+  before(async () => {
+    resetExam = await makeFeedbackExam({ questionCount: 1, attemptsPerQuestion: 2, code: 'RESETEX1' });
+    await finishExam();
+  });
+
+  test('قائمة السجلات تُظهر محاولة الطالب المنتهية', async () => {
+    const res = await request(`/exams/${resetExam.exam._id}/sessions`, { token: users.adminToken });
+    assert.equal(res.status, 200, res.body.message);
+    assert.equal(res.body.data.length, 1);
+    assert.equal(res.body.data[0].status, 'completed');
+    assert.equal(res.body.data[0].correctCount, 1);
+    sessionId = res.body.data[0].sessionId;
+  });
+
+  test('قبل الحذف: الطالب ممنوع من الإعادة', async () => {
+    const res = await request('/exam/RESETEX1/start', { method: 'POST', token: users.studentToken });
+    assert.equal(res.status, 409);
+  });
+
+  test('سجل من اختبار آخر لا يُحذف من هنا', async () => {
+    const res = await request(`/exams/${fixture.exam._id}/sessions/${sessionId}`, {
+      method: 'DELETE',
+      token: users.adminToken,
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('الحذف للمسؤول فقط', async () => {
+    const res = await request(`/exams/${resetExam.exam._id}/sessions/${sessionId}`, {
+      method: 'DELETE',
+      token: users.studentToken,
+    });
+    assert.equal(res.status, 403);
+  });
+
+  test('بعد الحذف: لا يبقى شيء من المحاولة', async () => {
+    const res = await request(`/exams/${resetExam.exam._id}/sessions/${sessionId}`, {
+      method: 'DELETE',
+      token: users.adminToken,
+    });
+    assert.equal(res.status, 200, res.body.message);
+
+    const list = await request(`/exams/${resetExam.exam._id}/sessions`, { token: users.adminToken });
+    assert.equal(list.body.data.length, 0);
+
+    const exam = await request(`/exams/${resetExam.exam._id}`, { token: users.adminToken });
+    assert.equal(exam.body.data.completedCount, 0);
+
+    const post = await request(`/stats/post-survey?exam=${resetExam.exam._id}`, { token: users.adminToken });
+    assert.equal(post.body.data.responseCount, 0, 'المقياس البعدي حُذف');
+  });
+
+  test('الطالب يعيد الاختبار من جديد، ويُطلب منه التقييم مرة أخرى', async () => {
+    const start = await request('/exam/RESETEX1/start', { method: 'POST', token: users.studentToken });
+    assert.equal(start.status, 200, start.body.message);
+    assert.ok(
+      start.body.data.progress.every((p) => p.attempts === 0 && !p.rated),
+      'لا إجابات ولا تقييمات قديمة'
+    );
+    // دورة كاملة ثانية: كانت ستفشل بخطأ تكرار لو بقي التقييم القديم
+    await finishExam();
+    const list = await request(`/exams/${resetExam.exam._id}/sessions`, { token: users.adminToken });
+    assert.equal(list.body.data.length, 1);
+    assert.equal(list.body.data[0].status, 'completed');
+  });
+});

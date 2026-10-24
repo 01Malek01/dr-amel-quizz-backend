@@ -9,6 +9,7 @@ const {
   getNormalQuestions,
   setNormalQuestions,
   getNormalResults,
+  deleteNormalResult,
 } = require('../controllers/normalExam.controller');
 const { protect, adminOnly } = require('../middleware/auth');
 
@@ -25,5 +26,6 @@ router.post('/:id/active', setActive);
 router.get('/:id/questions', getNormalQuestions);
 router.put('/:id/questions', setNormalQuestions);
 router.get('/:id/results', getNormalResults);
+router.delete('/:id/results/:resultId', deleteNormalResult);
 
 module.exports = router;

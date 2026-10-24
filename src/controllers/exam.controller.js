@@ -8,6 +8,7 @@ const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
 const User = require('../models/User');
+const PostExamSurvey = require('../models/PostExamSurvey');
 const FeedbackRating = require('../models/FeedbackRating');
 
 const listExams = asyncHandler(async (req, res) => {
@@ -196,6 +197,64 @@ const revokeLateAccess = asyncHandler(async (req, res) => {
   res.json({ success: true, data: exam.lateAccessUsers });
 });
 
+// سجلات الطلاب في اختبار: جلسة لكل طالب، منتهية أو قيد التقدم
+const listSessions = asyncHandler(async (req, res) => {
+  const exam = await Exam.findById(req.params.id).select('_id');
+  if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
+
+  const [sessions, questionCount] = await Promise.all([
+    Session.find({ exam: exam._id })
+      .populate({ path: 'user', select: 'name nationalId group', populate: { path: 'group', select: 'name' } })
+      .sort({ startedAt: -1 }),
+    Question.countDocuments({ exam: exam._id }),
+  ]);
+
+  res.json({
+    success: true,
+    data: sessions.map((s) => ({
+      sessionId: s._id,
+      studentId: s.user?._id || null,
+      studentName: s.user?.name || 'محذوف',
+      nationalId: s.user?.nationalId || '',
+      group: s.user?.group?.name || null,
+      status: s.status,
+      correctCount: s.correctCount,
+      questionCount,
+      answeredCount: (s.details || []).length,
+      badges: s.badges || 0,
+      skippedCount: s.skippedCount || 0,
+      totalTimeSeconds: s.totalTimeSeconds || 0,
+      startedAt: s.startedAt,
+      completedAt: s.completedAt,
+    })),
+  });
+});
+
+/*
+ * حذف سجل طالب في اختبار تغذية راجعة، ليعيده من البداية.
+ * يُحذف معه كل ما يخص هذه المحاولة: الإجابات، وتقييمات مقياس الفائدة المدركة
+ * (فريدة لكل طالب وسؤال، فبقاؤها يُفشل تقييم الإعادة أو يتخطاه)، والمقياس البعدي.
+ */
+const deleteSession = asyncHandler(async (req, res) => {
+  const session = await Session.findOne({ _id: req.params.sessionId, exam: req.params.id });
+  if (!session) throw new ApiError(404, 'السجل غير موجود في هذا الاختبار');
+
+  await Promise.all([
+    Attempt.deleteMany({ session: session._id }),
+    FeedbackRating.deleteMany({ user: session.user, exam: session.exam }),
+    PostExamSurvey.deleteMany({ session: session._id }),
+  ]);
+  if (session.status === 'completed') {
+    await Exam.updateOne(
+      { _id: session.exam, completions: { $gt: 0 } },
+      { $inc: { completions: -1 } }
+    );
+  }
+  await session.deleteOne();
+
+  res.json({ success: true, message: 'تم حذف السجل. يستطيع الطالب أداء الاختبار من جديد.' });
+});
+
 module.exports = {
   listExams,
   getExam,
@@ -206,4 +265,6 @@ module.exports = {
   deleteExam,
   grantLateAccess,
   revokeLateAccess,
+  listSessions,
+  deleteSession,
 };

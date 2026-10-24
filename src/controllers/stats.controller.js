@@ -275,6 +275,7 @@ const perStudentExam = asyncHandler(async (req, res) => {
         studentId: s.user?._id,
         studentName: s.user?.name || 'محذوف',
         username: s.user?.username || '',
+        nationalId: s.user?.nationalId || '',
         group: s.user?.group?.name || null,
         examId: s.exam?._id,
         examTitle: s.exam?.title || 'محذوف',
@@ -288,6 +289,7 @@ const perStudentExam = asyncHandler(async (req, res) => {
         badges: s.badges || 0,
         avgTriesBeforeCorrect: Math.round(avgTries * 100) / 100,
         avgTimePerQuestion: Math.round(avgTimePerQuestion * 100) / 100,
+        totalTimeSeconds: s.totalTimeSeconds || 0,
         completedAt: s.completedAt,
       };
     })
@@ -362,6 +364,7 @@ const feedbackRatings = asyncHandler(async (req, res) => {
       byKey[key] = {
         studentId,
         studentName: r.user?.name || 'بدون اسم',
+        nationalId: r.user?.nationalId || '',
         group: r.user?.group?.name || null,
         examId,
         examTitle,
@@ -369,7 +372,11 @@ const feedbackRatings = asyncHandler(async (req, res) => {
       };
     }
     const score = Math.round((r.score || 0) * 100) / 100;
-    byKey[key].perQuestion[String(r.question?._id)] = { order: r.question?.order, score };
+    byKey[key].perQuestion[String(r.question?._id)] = {
+      order: r.question?.order,
+      score,
+      items: [r.item1, r.item2, r.item3],
+    };
   }
 
   const students = Object.values(byKey).map((s) => {
@@ -379,6 +386,7 @@ const feedbackRatings = asyncHandler(async (req, res) => {
         order: q.order,
         text: q.text,
         score: s.perQuestion[String(q.questionId)]?.score ?? null,
+        items: s.perQuestion[String(q.questionId)]?.items ?? null,
       }))
       .sort((a, b) => a.order - b.order);
     const totalQuestionCount = examQuestionCount[s.examId] || ordered.filter((x) => x.score != null).length;
@@ -389,6 +397,7 @@ const feedbackRatings = asyncHandler(async (req, res) => {
     return {
       studentId: s.studentId,
       studentName: s.studentName,
+      nationalId: s.nationalId,
       group: s.group,
       examId: s.examId,
       examTitle: s.examTitle,
@@ -442,7 +451,11 @@ const postSurveyResults = asyncHandler(async (req, res) => {
   if (!examDoc) throw new ApiError(404, 'الاختبار غير موجود');
 
   const rows = await PostExamSurvey.find({ exam: examDoc._id })
-    .populate({ path: 'user', select: 'name username group', populate: { path: 'group', select: 'name' } })
+    .populate({
+      path: 'user',
+      select: 'name username nationalId group',
+      populate: { path: 'group', select: 'name' },
+    })
     .sort({ submittedAt: -1 });
 
   const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -453,6 +466,7 @@ const postSurveyResults = asyncHandler(async (req, res) => {
     id: r._id,
     studentName: r.user?.name || 'محذوف',
     username: r.user?.username || '',
+    nationalId: r.user?.nationalId || '',
     group: r.user?.group?.name || null,
     scores: items.map((_, i) => {
       const a = r.answers.find((x) => x.item === i);

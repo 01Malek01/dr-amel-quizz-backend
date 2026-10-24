@@ -447,3 +447,90 @@ describe('تخطي الأسئلة', () => {
     assert.ok(rows.some((r) => r.skippedCount === 2), 'صف بسؤالين متروكين');
   });
 });
+
+describe('حذف نتيجة طالب في الاختبار التحصيلي', () => {
+  let delExam;
+  let delCode;
+  let delQuestions;
+  let token;
+
+  before(async () => {
+    const created = await asAdmin('/normal-exams', {
+      method: 'POST',
+      body: { title: 'اختبار حذف النتيجة', totalGrade: 10 },
+    });
+    delExam = created.body.data._id;
+    delCode = created.body.data.code;
+    const saved = await asAdmin(`/normal-exams/${delExam}/questions`, {
+      method: 'PUT',
+      body: {
+        questions: [1, 2].map((n) => ({
+          _id: null,
+          text: `سؤال ${n}`,
+          options: [
+            { text: 'صحيحة', isCorrect: true },
+            { text: 'خاطئة', isCorrect: false },
+          ],
+        })),
+      },
+    });
+    delQuestions = saved.body.data;
+    await asAdmin(`/normal-exams/${delExam}/active`, { method: 'POST', body: { active: true } });
+
+    await asAdmin('/users', {
+      method: 'POST',
+      body: { name: 'طالب الحذف', nationalId: '77778888', password: 'pass1234', role: 'student' },
+    });
+    token = (
+      await request('/auth/login', {
+        method: 'POST',
+        body: { identifier: '77778888', password: 'pass1234' },
+      })
+    ).body.token;
+  });
+
+  const submit = () =>
+    request(`/normal-exam/${delCode}/submit`, {
+      method: 'POST',
+      token,
+      body: {
+        answers: [
+          { questionId: String(delQuestions[0]._id), optionId: String(delQuestions[0].options.find((o) => o.isCorrect)._id) },
+          { questionId: String(delQuestions[1]._id), optionId: String(delQuestions[1].options.find((o) => !o.isCorrect)._id) },
+        ],
+      },
+    });
+
+  test('النتائج تحمل الرقم الوطني وإجابة كل سؤال', async () => {
+    assert.equal((await submit()).status, 201);
+    const res = await asAdmin(`/normal-exams/${delExam}/results`);
+    assert.equal(res.body.data.questions.length, 2);
+    const row = res.body.data.results[0];
+    assert.equal(row.nationalId, '77778888');
+    assert.deepEqual(row.answers, [
+      { status: 'correct', choice: 'أ' },
+      { status: 'wrong', choice: 'ب' },
+    ]);
+  });
+
+  test('قبل الحذف: الإعادة ممنوعة خلال المهلة', async () => {
+    assert.equal((await submit()).status, 409);
+  });
+
+  test('نتيجة من اختبار آخر لا تُحذف من هنا', async () => {
+    const row = (await asAdmin(`/normal-exams/${delExam}/results`)).body.data.results[0];
+    const res = await asAdmin(`/normal-exams/${examId}/results/${row._id}`, { method: 'DELETE' });
+    assert.equal(res.status, 404);
+  });
+
+  test('بعد الحذف: النتيجة اختفت والطالب يعيد فورًا', async () => {
+    const row = (await asAdmin(`/normal-exams/${delExam}/results`)).body.data.results[0];
+    const res = await asAdmin(`/normal-exams/${delExam}/results/${row._id}`, { method: 'DELETE' });
+    assert.equal(res.status, 200, res.body.message);
+
+    const after = await asAdmin(`/normal-exams/${delExam}/results`);
+    assert.equal(after.body.data.results.length, 0);
+
+    assert.equal((await submit()).status, 201, 'المهلة سقطت مع حذف النتيجة');
+  });
+});

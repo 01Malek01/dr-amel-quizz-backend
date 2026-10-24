@@ -155,15 +155,33 @@ const getNormalResults = asyncHandler(async (req, res) => {
   const exam = await NormalExam.findById(req.params.id);
   if (!exam) throw new ApiError(404, 'الاختبار غير موجود');
 
-  const results = await NormalExamResult.find({ exam: exam._id })
-    .populate('user', 'name username group')
-    .sort({ grade: -1, submittedAt: -1 });
+  const [results, questions] = await Promise.all([
+    NormalExamResult.find({ exam: exam._id })
+      .populate('user', 'name username nationalId group')
+      .sort({ grade: -1, submittedAt: -1 }),
+    NormalQuestion.find({ exam: exam._id }).sort({ order: 1 }),
+  ]);
+
+  // إجابة كل طالب عن كل سؤال، مرتبة كترتيب الأسئلة — لملف الإكسيل
+  const LETTERS = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح'];
+  const answersFor = (r) =>
+    questions.map((q) => {
+      const a = (r.answers || []).find((x) => String(x.question) === String(q._id));
+      if (!a || a.skipped || !a.chosenOption) return { status: 'skipped', choice: '' };
+      const index = q.options.findIndex((o) => String(o._id) === String(a.chosenOption));
+      return {
+        status: a.isCorrect ? 'correct' : 'wrong',
+        choice: index >= 0 ? LETTERS[index] || String(index + 1) : '?',
+      };
+    });
 
   const data = results.map((r) => ({
     _id: r._id,
     userId: r.user?._id,
     studentName: r.user?.name || 'محذوف',
     username: r.user?.username || '',
+    nationalId: r.user?.nationalId || '',
+    answers: answersFor(r),
     correctCount: r.correctCount,
     skippedCount: r.skippedCount || 0,
     questionCount: r.questionCount,
@@ -176,10 +194,20 @@ const getNormalResults = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     data: {
-      exam: { ...exam.toObject(), questionCount: await questionCountFor(exam._id), resultCount: data.length },
+      exam: { ...exam.toObject(), questionCount: questions.length, resultCount: data.length },
+      questions: questions.map((q) => ({ _id: q._id, order: q.order, text: q.text })),
       results: data,
     },
   });
+});
+
+// حذف نتيجة طالب واحدة. تسقط معها مهلة إعادة الاختبار المحسوبة من آخر نتيجة،
+// فيستطيع الطالب أداءه من جديد فورًا.
+const deleteNormalResult = asyncHandler(async (req, res) => {
+  const result = await NormalExamResult.findOne({ _id: req.params.resultId, exam: req.params.id });
+  if (!result) throw new ApiError(404, 'النتيجة غير موجودة في هذا الاختبار');
+  await result.deleteOne();
+  res.json({ success: true, message: 'تم حذف النتيجة. يستطيع الطالب أداء الاختبار من جديد.' });
 });
 
 module.exports = {
@@ -192,4 +220,5 @@ module.exports = {
   getNormalQuestions,
   setNormalQuestions,
   getNormalResults,
+  deleteNormalResult,
 };

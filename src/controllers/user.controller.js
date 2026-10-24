@@ -5,6 +5,11 @@ const { toSafeUser } = require('../utils/serialize');
 const User = require('../models/User');
 const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
+const Exam = require('../models/Exam');
+const FeedbackRating = require('../models/FeedbackRating');
+const PostExamSurvey = require('../models/PostExamSurvey');
+const NormalExamResult = require('../models/NormalExamResult');
+const SurveyResponse = require('../models/SurveyResponse');
 
 const FIELD_LABELS = {
   username: 'اسم المستخدم',
@@ -148,8 +153,18 @@ const deleteUser = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'لا يمكن حذف حسابات المديرين');
   }
 
-  await Attempt.deleteMany({ user: user._id });
-  await Session.deleteMany({ user: user._id });
+  // كل ما يخص الطالب، لا المحاولات والجلسات وحدها: بقاء درجات الاختبار
+  // التحصيلي وإجابات المقاييس يتركها في النتائج باسم «محذوف»، ولا يمكن
+  // حذفها بعدها لأن الاسم لم يعد مخزنًا في أي مكان.
+  await Promise.all([
+    Attempt.deleteMany({ user: user._id }),
+    Session.deleteMany({ user: user._id }),
+    FeedbackRating.deleteMany({ user: user._id }),
+    PostExamSurvey.deleteMany({ user: user._id }),
+    NormalExamResult.deleteMany({ user: user._id }),
+    SurveyResponse.deleteMany({ user: user._id }),
+    Exam.updateMany({ lateAccessUsers: user._id }, { $pull: { lateAccessUsers: user._id } }),
+  ]);
   await user.deleteOne();
 
   res.json({ success: true, message: 'تم حذف المستخدم وسجلات اختباراته' });
