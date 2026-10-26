@@ -16,6 +16,7 @@ const STUDENT_COLLECTIONS = [
   'postexamsurveys',
   'normalexamresults',
   'surveyresponses',
+  'usefulnesssurveys',
 ];
 
 before(async () => {

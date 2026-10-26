@@ -23,10 +23,11 @@ const Session = require('../models/Session');
 const Attempt = require('../models/Attempt');
 const FeedbackRating = require('../models/FeedbackRating');
 const PostExamSurvey = require('../models/PostExamSurvey');
+const UsefulnessSurvey = require('../models/UsefulnessSurvey');
 const Survey = require('../models/Survey');
 const SurveyQuestion = require('../models/SurveyQuestion');
 const SurveyResponse = require('../models/SurveyResponse');
-const { PREBUILT_SURVEY, POST_EXAM_SURVEY } = require('../constants');
+const { PREBUILT_SURVEY, POST_EXAM_SURVEY, USEFULNESS_SURVEY } = require('../constants');
 
 const SIM_CHAPTER = 'محاكاة — بيانات تجريبية';
 const SIM_TOPIC = 'محاكاة نتائج التغذية الراجعة';
@@ -86,6 +87,7 @@ const clean = async () => {
     await Attempt.deleteMany({ exam: exam._id });
     await FeedbackRating.deleteMany({ exam: exam._id });
     await PostExamSurvey.deleteMany({ exam: exam._id });
+    await UsefulnessSurvey.deleteMany({ exam: exam._id });
     await Question.deleteMany({ exam: exam._id });
     await exam.deleteOne();
   }
@@ -97,6 +99,7 @@ const clean = async () => {
     await Attempt.deleteMany({ user: { $in: ids } });
     await FeedbackRating.deleteMany({ user: { $in: ids } });
     await PostExamSurvey.deleteMany({ user: { $in: ids } });
+    await UsefulnessSurvey.deleteMany({ user: { $in: ids } });
     await User.deleteMany({ _id: { $in: ids } });
   }
 
@@ -254,22 +257,11 @@ const seed = async () => {
         totalTimeSeconds: seconds,
       });
 
-      const jitter = i % 3 === 0 ? 0 : i % 3 === 1 ? 1 : -1;
-      const items = p.rating.map((v) => Math.min(5, Math.max(1, v + (i === 0 ? 0 : jitter))));
-      await FeedbackRating.create({
-        user: user._id,
-        exam: exam._id,
-        session: session._id,
-        question: q._id,
-        item1: items[0],
-        item2: items[1],
-        item3: items[2],
-        score: Math.round(((items[0] + items[1] + items[2]) / 3) * 100) / 100,
-      });
 
     }
 
     session.set({
+      questionsFinishedAt: completedAt,
       correctCount: p.correct,
       wrongCount: wrongAttempts,
       skippedCount: Math.max(Q_COUNT - (p.correct + wrongAttempts), 0),
@@ -279,7 +271,25 @@ const seed = async () => {
     });
     await session.save();
 
-    // المقياس البعدي: إلزامي بعد آخر سؤال
+    // مقياس الفائدة المدركة: بعد آخر سؤال وقبل النتيجة
+    const usefulBase = Math.round(p.rating.reduce((a, b) => a + b, 0) / p.rating.length);
+    const usefulAnswers = USEFULNESS_SURVEY.items.map((text, idx) => {
+      const choice = pickChoice(usefulBase + ((idx % 3) - 1));
+      return { item: idx, text, score: choice.score, label: choice.label };
+    });
+    const usefulTotal = usefulAnswers.reduce((sum, a) => sum + a.score, 0);
+    await UsefulnessSurvey.create({
+      user: user._id,
+      exam: exam._id,
+      session: session._id,
+      answers: usefulAnswers,
+      totalScore: usefulTotal,
+      itemCount: usefulAnswers.length,
+      result: Math.round((usefulTotal / usefulAnswers.length) * 100) / 100,
+      submittedAt: completedAt,
+    });
+
+    // المقياس البعدي: إلزامي بعد عرض النتيجة
     const postAnswers = POST_EXAM_SURVEY.items.map((text, idx) => {
       const choice = pickChoice(p.mood + ((idx % 3) - 1));
       return { item: idx, text, score: choice.score, label: choice.label };

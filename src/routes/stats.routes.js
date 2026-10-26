@@ -8,6 +8,8 @@ const {
   perStudentExam,
   feedbackRatings,
   postSurveyResults,
+  usefulnessResults,
+  usefulnessCumulative,
 } = require('../controllers/stats.controller');
 const { protect, adminOnly } = require('../middleware/auth');
 
@@ -23,5 +25,7 @@ router.get('/students', studentsStats);
 router.get('/per-student-exam', perStudentExam);
 router.get('/feedback-ratings', feedbackRatings);
 router.get('/post-survey', postSurveyResults);
+router.get('/usefulness-survey', usefulnessResults);
+router.get('/usefulness-cumulative', usefulnessCumulative);
 
 module.exports = router;

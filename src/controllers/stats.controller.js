@@ -1,6 +1,6 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
-const { FEEDBACK_TYPE_LABELS, POST_EXAM_SURVEY } = require('../constants');
+const { FEEDBACK_TYPE_LABELS, POST_EXAM_SURVEY, USEFULNESS_SURVEY } = require('../constants');
 const User = require('../models/User');
 const Group = require('../models/Group');
 const Exam = require('../models/Exam');
@@ -9,6 +9,7 @@ const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
 const FeedbackRating = require('../models/FeedbackRating');
 const PostExamSurvey = require('../models/PostExamSurvey');
+const UsefulnessSurvey = require('../models/UsefulnessSurvey');
 
 const overview = asyncHandler(async (req, res) => {
   const [students, groups, exams, publishedExams, sessions, completedSessions, attempts] =
@@ -443,14 +444,17 @@ const feedbackRatings = asyncHandler(async (req, res) => {
 });
 
 // نتائج المقياس البعدي لاختبار: صف لكل طالب وعمود لكل عبارة من عبارات المقياس
-const postSurveyResults = asyncHandler(async (req, res) => {
+// نتائج مقياس لاختبار: صف لكل طالب وعمود لكل عبارة. تُستخدم للمقياس البعدي
+// ولمقياس الفائدة المدركة، ولكل منهما نموذجه وعباراته.
+const scaleResultsFor = (Model, definition) =>
+  asyncHandler(async (req, res) => {
   const { exam = '' } = req.query;
   if (!exam) throw new ApiError(400, 'حدد الاختبار');
 
   const examDoc = await Exam.findById(exam).select('title');
   if (!examDoc) throw new ApiError(404, 'الاختبار غير موجود');
 
-  const rows = await PostExamSurvey.find({ exam: examDoc._id })
+  const rows = await Model.find({ exam: examDoc._id })
     .populate({
       path: 'user',
       select: 'name username nationalId group',
@@ -459,7 +463,7 @@ const postSurveyResults = asyncHandler(async (req, res) => {
     .sort({ submittedAt: -1 });
 
   const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-  const { items, choices } = POST_EXAM_SURVEY;
+  const { items, choices } = definition;
   const scores = choices.map((c) => c.score);
 
   /*
@@ -529,6 +533,75 @@ const postSurveyResults = asyncHandler(async (req, res) => {
   });
 });
 
+const postSurveyResults = scaleResultsFor(PostExamSurvey, POST_EXAM_SURVEY);
+const usefulnessResults = scaleResultsFor(UsefulnessSurvey, USEFULNESS_SURVEY);
+
+/*
+ * مقياس الفائدة المدركة عبر كل الاختبارات: نتيجة كل طالب في كل اختبار أجاب فيه
+ * عن المقياس، ونتيجته التراكمية = متوسط نتائجه في هذه الاختبارات.
+ * تُحسب من إجابات النسخة الحالية من المقياس فقط (المطابقة بنصوص العبارات)،
+ * فلا تختلط بنسخة سابقة إن تغيّرت العبارات لاحقًا.
+ */
+const usefulnessCumulative = asyncHandler(async (req, res) => {
+  const { items } = USEFULNESS_SURVEY;
+  const isCurrentVersion = (r) =>
+    r.answers.length === items.length && items.every((text) => r.answers.some((a) => a.text === text));
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const mean = (values) => values.reduce((a, b) => a + b, 0) / values.length;
+
+  const responses = await UsefulnessSurvey.find()
+    .populate({ path: 'user', select: 'name nationalId group', populate: { path: 'group', select: 'name' } })
+    .populate({ path: 'exam', select: 'title createdAt' });
+
+  const examsById = new Map();
+  const byStudent = new Map();
+  responses
+    .filter((r) => r.user && r.exam && isCurrentVersion(r))
+    .forEach((r) => {
+      const examId = String(r.exam._id);
+      examsById.set(examId, { _id: r.exam._id, title: r.exam.title, createdAt: r.exam.createdAt });
+      const key = String(r.user._id);
+      if (!byStudent.has(key)) {
+        byStudent.set(key, {
+          studentId: r.user._id,
+          studentName: r.user.name,
+          nationalId: r.user.nationalId || '',
+          group: r.user.group?.name || null,
+          perExam: {},
+        });
+      }
+      byStudent.get(key).perExam[examId] = r.result;
+    });
+
+  // الاختبارات بترتيب إنشائها، وهو ترتيب تقديمها للطلاب عادةً
+  const exams = [...examsById.values()]
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    .map(({ _id, title }) => ({ _id, title }));
+
+  const students = [...byStudent.values()]
+    .map((st) => {
+      const results = Object.values(st.perExam);
+      return { ...st, examCount: results.length, cumulative: r2(mean(results)) };
+    })
+    .sort((a, b) => a.studentName.localeCompare(b.studentName, 'ar'));
+
+  const examAverages = exams.map((e) => {
+    const values = students.map((st) => st.perExam[String(e._id)]).filter((v) => v != null);
+    return { examId: e._id, count: values.length, avg: values.length ? r2(mean(values)) : null };
+  });
+
+  res.json({
+    success: true,
+    data: {
+      itemCount: items.length,
+      exams,
+      students,
+      examAverages,
+      overallCumulative: students.length ? r2(mean(students.map((st) => st.cumulative))) : 0,
+    },
+  });
+});
+
 module.exports = {
   overview,
   byFeedback,
@@ -538,4 +611,6 @@ module.exports = {
   perStudentExam,
   feedbackRatings,
   postSurveyResults,
+  usefulnessResults,
+  usefulnessCumulative,
 };

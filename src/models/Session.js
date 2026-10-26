@@ -42,6 +42,9 @@ const sessionSchema = new mongoose.Schema(
     correctCount: { type: Number, default: 0 },
     wrongCount: { type: Number, default: 0 },
     skippedCount: { type: Number, default: 0 },
+    // أنهى الأسئلة ومقياس الفائدة ورأى نتيجته. تبقى الجلسة «قيد التقدم» ولا تُسجَّل
+    // النتيجة حتى يُجيب عن المقياس البعدي الإلزامي.
+    questionsFinishedAt: { type: Date, default: null },
     stars: { type: Number, default: 0 },
     badges: { type: Number, default: 0 },
     details: { type: [detailSchema], default: [] },

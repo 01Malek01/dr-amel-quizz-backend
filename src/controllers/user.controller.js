@@ -8,6 +8,7 @@ const Session = require('../models/Session');
 const Exam = require('../models/Exam');
 const FeedbackRating = require('../models/FeedbackRating');
 const PostExamSurvey = require('../models/PostExamSurvey');
+const UsefulnessSurvey = require('../models/UsefulnessSurvey');
 const NormalExamResult = require('../models/NormalExamResult');
 const SurveyResponse = require('../models/SurveyResponse');
 
@@ -161,6 +162,7 @@ const deleteUser = asyncHandler(async (req, res) => {
     Session.deleteMany({ user: user._id }),
     FeedbackRating.deleteMany({ user: user._id }),
     PostExamSurvey.deleteMany({ user: user._id }),
+    UsefulnessSurvey.deleteMany({ user: user._id }),
     NormalExamResult.deleteMany({ user: user._id }),
     SurveyResponse.deleteMany({ user: user._id }),
     Exam.updateMany({ lateAccessUsers: user._id }, { $pull: { lateAccessUsers: user._id } }),

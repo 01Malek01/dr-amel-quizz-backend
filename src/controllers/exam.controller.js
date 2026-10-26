@@ -9,6 +9,7 @@ const Attempt = require('../models/Attempt');
 const Session = require('../models/Session');
 const User = require('../models/User');
 const PostExamSurvey = require('../models/PostExamSurvey');
+const UsefulnessSurvey = require('../models/UsefulnessSurvey');
 const FeedbackRating = require('../models/FeedbackRating');
 
 const listExams = asyncHandler(async (req, res) => {
@@ -156,6 +157,9 @@ const deleteExam = asyncHandler(async (req, res) => {
   await Session.deleteMany({ exam: exam._id });
   await Question.deleteMany({ exam: exam._id });
   await FeedbackRating.deleteMany({ exam: exam._id });
+  // إجابات المقياسين كانت تبقى بعد حذف الاختبار
+  await UsefulnessSurvey.deleteMany({ exam: exam._id });
+  await PostExamSurvey.deleteMany({ exam: exam._id });
   await exam.deleteOne();
 
   res.json({ success: true, message: 'تم حذف الاختبار وسجلاته' });
@@ -209,6 +213,14 @@ const listSessions = asyncHandler(async (req, res) => {
     Question.countDocuments({ exam: exam._id }),
   ]);
 
+  const sessionIds = sessions.map((s) => s._id);
+  const [usefulDone, postDone] = await Promise.all([
+    UsefulnessSurvey.distinct('session', { session: { $in: sessionIds } }),
+    PostExamSurvey.distinct('session', { session: { $in: sessionIds } }),
+  ]);
+  const usefulSet = new Set(usefulDone.map(String));
+  const postSet = new Set(postDone.map(String));
+
   res.json({
     success: true,
     data: sessions.map((s) => ({
@@ -226,6 +238,9 @@ const listSessions = asyncHandler(async (req, res) => {
       totalTimeSeconds: s.totalTimeSeconds || 0,
       startedAt: s.startedAt,
       completedAt: s.completedAt,
+      usefulnessDone: usefulSet.has(String(s._id)),
+      postSurveyDone: postSet.has(String(s._id)),
+      questionsFinished: !!s.questionsFinishedAt,
     })),
   });
 });
@@ -243,6 +258,7 @@ const deleteSession = asyncHandler(async (req, res) => {
     Attempt.deleteMany({ session: session._id }),
     FeedbackRating.deleteMany({ user: session.user, exam: session.exam }),
     PostExamSurvey.deleteMany({ session: session._id }),
+    UsefulnessSurvey.deleteMany({ session: session._id }),
   ]);
   if (session.status === 'completed') {
     await Exam.updateOne(
