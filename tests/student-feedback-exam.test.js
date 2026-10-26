@@ -2,6 +2,16 @@ const { test, before, after, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { boot, shutdown, client, makeUsers, makeFeedbackExam, MISSING_ID } = require('./helpers');
+const mongoose = require('mongoose');
+const { POST_EXAM_SURVEY, PREBUILT_SURVEY } = require('../src/constants');
+const PostExamSurveyModel = require('../src/models/PostExamSurvey');
+
+// المقياس البعدي: عدد عباراته يأتي من الثابت لا من رقم مكتوب في الاختبار
+const POST_N = POST_EXAM_SURVEY.items.length;
+const postAnswers = (value) => Array(POST_N).fill(value);
+const PATTERN = Array.from({ length: POST_N }, (_, i) => [5, 4, 4, 3, 2, 1, 2, 3][i % 8]);
+const PATTERN_TOTAL = PATTERN.reduce((a, b) => a + b, 0);
+const PATTERN_RESULT = Math.round((PATTERN_TOTAL / POST_N) * 100) / 100;
 const Session = require('../src/models/Session');
 
 let request;
@@ -180,11 +190,11 @@ describe('إنهاء الاختبار', () => {
     const post = await request('/exam/TESTEX1/post-survey', {
       method: 'POST',
       token: users.studentToken,
-      body: { answers: [5, 4, 4, 3, 2, 1, 2, 3] },
+      body: { answers: PATTERN },
     });
     assert.equal(post.status, 201, post.body.message);
-    assert.equal(post.body.data.totalScore, 24);
-    assert.equal(post.body.data.result, 3);
+    assert.equal(post.body.data.totalScore, PATTERN_TOTAL);
+    assert.equal(post.body.data.result, PATTERN_RESULT);
 
     const res = await request('/exam/TESTEX1/complete', {
       method: 'POST',
@@ -272,7 +282,8 @@ describe('المقياس البعدي', () => {
     await makeFeedbackExam({ questionCount: 2, attemptsPerQuestion: 2, code: 'POSTEX1' });
     const res = await request('/exam/POSTEX1/start', { method: 'POST', token: users.studentToken });
     assert.equal(res.status, 200, res.body.message);
-    assert.equal(res.body.data.postSurvey.items.length, 8);
+    assert.equal(res.body.data.postSurvey.items.length, POST_N);
+    assert.deepEqual(res.body.data.postSurvey.items, POST_EXAM_SURVEY.items);
     assert.equal(res.body.data.postSurvey.choices.length, 5);
     assert.equal(res.body.data.postSurveyDone, false);
   });
@@ -282,10 +293,12 @@ describe('المقياس البعدي', () => {
       undefined,
       [],
       [5, 5, 5],
-      [5, 5, 5, 5, 5, 5, 5, 9],
-      [5, 5, 5, 5, 5, 5, 5, 0],
-      [5, 5, 5, 5, 5, 5, 5, 2.5],
-      [5, 5, 5, 5, 5, 5, 5, 'x'],
+      postAnswers(5).slice(1), // عبارة ناقصة
+      [...postAnswers(5), 5], // عبارة زائدة
+      [...postAnswers(5).slice(1), 9],
+      [...postAnswers(5).slice(1), 0],
+      [...postAnswers(5).slice(1), 2.5],
+      [...postAnswers(5).slice(1), 'x'],
       'nope',
     ]) {
       const res = await request('/exam/POSTEX1/post-survey', {
@@ -321,14 +334,14 @@ describe('المقياس البعدي', () => {
     const post = await request('/exam/POSTEX1/post-survey', {
       method: 'POST',
       token: users.studentToken,
-      body: { answers: [4, 4, 4, 4, 4, 4, 4, 4] },
+      body: { answers: postAnswers(4) },
     });
     assert.equal(post.status, 201, post.body.message);
 
     const again = await request('/exam/POSTEX1/post-survey', {
       method: 'POST',
       token: users.studentToken,
-      body: { answers: [1, 1, 1, 1, 1, 1, 1, 1] },
+      body: { answers: postAnswers(1) },
     });
     assert.equal(again.status, 200);
     assert.equal(again.body.data.alreadySubmitted, true, 'لا يُسجَّل المقياس البعدي مرتين');
@@ -348,10 +361,10 @@ describe('المقياس البعدي', () => {
     });
     assert.equal(res.status, 200, res.body.message);
     assert.equal(res.body.data.responseCount, 1);
-    assert.equal(res.body.data.items.length, 8);
-    assert.deepEqual(res.body.data.students[0].scores, [5, 4, 4, 3, 2, 1, 2, 3]);
-    assert.equal(res.body.data.students[0].result, 3);
-    assert.equal(res.body.data.overallAvg, 3);
+    assert.equal(res.body.data.items.length, POST_N);
+    assert.deepEqual(res.body.data.students[0].scores, PATTERN);
+    assert.equal(res.body.data.students[0].result, PATTERN_RESULT);
+    assert.equal(res.body.data.overallAvg, PATTERN_RESULT);
   });
 
   test('نتائج المقياس البعدي محمية عن الطلاب', async () => {
@@ -399,7 +412,7 @@ describe('سجل الدرجات', () => {
     await request('/exam/HISTEX1/post-survey', {
       method: 'POST',
       token: users.studentToken,
-      body: { answers: [4, 4, 4, 4, 4, 4, 4, 4] },
+      body: { answers: postAnswers(4) },
     });
 
     const res = await request('/exam/HISTEX1/complete', {
@@ -574,7 +587,7 @@ describe('مقياس الفائدة المدركة لا يمكن تجاوزه', 
     await request('/exam/RATEEX1/post-survey', {
       method: 'POST',
       token: users.studentToken,
-      body: { answers: [3, 3, 3, 3, 3, 3, 3, 3] },
+      body: { answers: postAnswers(3) },
     });
     const res = await request('/exam/RATEEX1/complete', {
       method: 'POST',
@@ -671,7 +684,7 @@ describe('عدد الطلاب في صفحة الاختبار', () => {
     await request('/exam/COUNTEX1/post-survey', {
       method: 'POST',
       token: users.studentToken,
-      body: { answers: [4, 4, 4, 4, 4, 4, 4, 4] },
+      body: { answers: postAnswers(4) },
     });
     const done = await request('/exam/COUNTEX1/complete', {
       method: 'POST',
@@ -706,7 +719,7 @@ describe('حذف سجل طالب في اختبار تغذية راجعة', () =>
     await request('/exam/RESETEX1/post-survey', {
       method: 'POST',
       token: users.studentToken,
-      body: { answers: [4, 4, 4, 4, 4, 4, 4, 4] },
+      body: { answers: postAnswers(4) },
     });
     const done = await request('/exam/RESETEX1/complete', {
       method: 'POST',
@@ -780,5 +793,60 @@ describe('حذف سجل طالب في اختبار تغذية راجعة', () =>
     const list = await request(`/exams/${resetExam.exam._id}/sessions`, { token: users.adminToken });
     assert.equal(list.body.data.length, 1);
     assert.equal(list.body.data[0].status, 'completed');
+  });
+});
+
+describe('عبارات المقياس البعدي الجديدة', () => {
+  test('عشرون عبارة، والاختيارات الخمسة ودرجاتها كما هي', () => {
+    assert.equal(POST_N, 20);
+    assert.deepEqual(POST_EXAM_SURVEY.choices, PREBUILT_SURVEY.choices);
+    assert.equal(new Set(POST_EXAM_SURVEY.items).size, POST_N, 'لا عبارة مكررة');
+  });
+
+  test('رابط المقياس القبلي المستقل لم يتغير: ما زال بعباراته الثماني', () => {
+    assert.equal(PREBUILT_SURVEY.items.length, 8);
+    assert.ok(!PREBUILT_SURVEY.items.some((t) => POST_EXAM_SURVEY.items.includes(t)));
+  });
+
+  test('إجابات النسخة السابقة لا تُعرض تحت العبارات الجديدة', async () => {
+    const legacyExam = await makeFeedbackExam({ questionCount: 1, code: 'LEGACYX1' });
+    const examId = legacyExam.exam._id;
+    const answersFor = (texts, score) =>
+      texts.map((text, item) => ({ item, text, score, label: '' }));
+
+    // طالب أجاب عن العبارات الثماني القديمة قبل التغيير
+    await PostExamSurveyModel.create({
+      user: users.student._id,
+      exam: examId,
+      session: new mongoose.Types.ObjectId(),
+      answers: answersFor(PREBUILT_SURVEY.items, 1),
+      totalScore: 8,
+      itemCount: 8,
+      result: 1,
+    });
+    // وطالب أجاب عن العبارات الجديدة
+    await PostExamSurveyModel.create({
+      user: users.student._id,
+      exam: examId,
+      session: new mongoose.Types.ObjectId(),
+      answers: answersFor(POST_EXAM_SURVEY.items, 5),
+      totalScore: 5 * POST_N,
+      itemCount: POST_N,
+      result: 5,
+    });
+
+    const res = await request(`/stats/post-survey?exam=${examId}`, { token: users.adminToken });
+    assert.equal(res.status, 200, res.body.message);
+
+    assert.equal(res.body.data.students.length, 1, 'الجدول الحالي فيه الإجابة الجديدة فقط');
+    assert.deepEqual(res.body.data.students[0].scores, postAnswers(5));
+    assert.equal(res.body.data.overallAvg, 5, 'المتوسط لا يخلط بين النسختين');
+
+    assert.equal(res.body.data.legacy.length, 1);
+    assert.deepEqual(
+      res.body.data.legacy[0].answers.map((a) => a.text),
+      PREBUILT_SURVEY.items,
+      'الإجابة القديمة تعود بنصوص عباراتها'
+    );
   });
 });

@@ -1,6 +1,6 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
-const { FEEDBACK_TYPE_LABELS, PREBUILT_SURVEY } = require('../constants');
+const { FEEDBACK_TYPE_LABELS, POST_EXAM_SURVEY } = require('../constants');
 const Exam = require('../models/Exam');
 const Question = require('../models/Question');
 const Attempt = require('../models/Attempt');
@@ -161,10 +161,10 @@ const start = asyncHandler(async (req, res) => {
       progress,
       // المقياس البعدي: إلزامي بعد آخر سؤال وقبل عرض النتيجة
       postSurvey: {
-        title: `المقياس البعدي — ${PREBUILT_SURVEY.title}`,
-        intro: PREBUILT_SURVEY.intro,
-        items: PREBUILT_SURVEY.items,
-        choices: PREBUILT_SURVEY.choices,
+        title: `المقياس البعدي — ${POST_EXAM_SURVEY.title}`,
+        intro: POST_EXAM_SURVEY.intro,
+        items: POST_EXAM_SURVEY.items,
+        choices: POST_EXAM_SURVEY.choices,
       },
       postSurveyDone,
     },
@@ -402,7 +402,7 @@ const submitPostSurvey = asyncHandler(async (req, res) => {
     return res.json({ success: true, data: { alreadySubmitted: true, result: existing.result } });
   }
 
-  const { items, choices } = PREBUILT_SURVEY;
+  const { items, choices } = POST_EXAM_SURVEY;
   const { answers } = req.body;
   if (!Array.isArray(answers) || answers.length !== items.length) {
     throw new ApiError(400, 'أجب عن جميع بنود المقياس البعدي');

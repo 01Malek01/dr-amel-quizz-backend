@@ -1,6 +1,6 @@
 const { ApiError } = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
-const { FEEDBACK_TYPE_LABELS, PREBUILT_SURVEY } = require('../constants');
+const { FEEDBACK_TYPE_LABELS, POST_EXAM_SURVEY } = require('../constants');
 const User = require('../models/User');
 const Group = require('../models/Group');
 const Exam = require('../models/Exam');
@@ -442,7 +442,7 @@ const feedbackRatings = asyncHandler(async (req, res) => {
   });
 });
 
-// نتائج المقياس البعدي لاختبار: صف لكل طالب وعمود لكل بند من البنود الثمانية
+// نتائج المقياس البعدي لاختبار: صف لكل طالب وعمود لكل عبارة من عبارات المقياس
 const postSurveyResults = asyncHandler(async (req, res) => {
   const { exam = '' } = req.query;
   if (!exam) throw new ApiError(400, 'حدد الاختبار');
@@ -459,17 +459,40 @@ const postSurveyResults = asyncHandler(async (req, res) => {
     .sort({ submittedAt: -1 });
 
   const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-  const { items, choices } = PREBUILT_SURVEY;
+  const { items, choices } = POST_EXAM_SURVEY;
   const scores = choices.map((c) => c.score);
 
-  const students = rows.map((r) => ({
+  /*
+   * تُطابَق الإجابة بنص العبارة المحفوظ معها، لا بترتيبها: تغيّرت عبارات المقياس،
+   * ومطابقة الترتيب كانت ستعرض إجابة العبارة الأولى القديمة تحت العبارة الأولى
+   * الجديدة. الإجابات عن نسخة سابقة تُعاد منفصلة بنصوصها.
+   */
+  const isCurrentVersion = (r) =>
+    r.answers.length === items.length && items.every((text) => r.answers.some((a) => a.text === text));
+  const currentRows = rows.filter(isCurrentVersion);
+  const legacyRows = rows.filter((r) => !isCurrentVersion(r));
+
+  const identity = (r) => ({
     id: r._id,
     studentName: r.user?.name || 'محذوف',
     username: r.user?.username || '',
     nationalId: r.user?.nationalId || '',
     group: r.user?.group?.name || null,
-    scores: items.map((_, i) => {
-      const a = r.answers.find((x) => x.item === i);
+  });
+
+  const legacy = legacyRows.map((r) => ({
+    ...identity(r),
+    answers: [...r.answers].sort((a, b) => a.item - b.item).map((a) => ({ text: a.text, score: a.score })),
+    totalScore: r.totalScore,
+    itemCount: r.itemCount,
+    result: r.result,
+    submittedAt: r.submittedAt,
+  }));
+
+  const students = currentRows.map((r) => ({
+    ...identity(r),
+    scores: items.map((text) => {
+      const a = r.answers.find((x) => x.text === text);
       return a ? a.score : null;
     }),
     totalScore: r.totalScore,
@@ -501,6 +524,7 @@ const postSurveyResults = asyncHandler(async (req, res) => {
       itemCount,
       overallAvg: itemCount ? r2(totalScore / itemCount) : 0,
       responseCount: students.length,
+      legacy,
     },
   });
 });

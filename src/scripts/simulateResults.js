@@ -26,7 +26,7 @@ const PostExamSurvey = require('../models/PostExamSurvey');
 const Survey = require('../models/Survey');
 const SurveyQuestion = require('../models/SurveyQuestion');
 const SurveyResponse = require('../models/SurveyResponse');
-const { PREBUILT_SURVEY } = require('../constants');
+const { PREBUILT_SURVEY, POST_EXAM_SURVEY } = require('../constants');
 
 const SIM_CHAPTER = 'محاكاة — بيانات تجريبية';
 const SIM_TOPIC = 'محاكاة نتائج التغذية الراجعة';
@@ -280,7 +280,7 @@ const seed = async () => {
     await session.save();
 
     // المقياس البعدي: إلزامي بعد آخر سؤال
-    const postAnswers = PREBUILT_SURVEY.items.map((text, idx) => {
+    const postAnswers = POST_EXAM_SURVEY.items.map((text, idx) => {
       const choice = pickChoice(p.mood + ((idx % 3) - 1));
       return { item: idx, text, score: choice.score, label: choice.label };
     });
