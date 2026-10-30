@@ -13,6 +13,20 @@ const PATTERN = Array.from({ length: POST_N }, (_, i) => [5, 4, 4, 3, 2, 1, 2, 3
 const PATTERN_TOTAL = PATTERN.reduce((a, b) => a + b, 0);
 const PATTERN_RESULT = Math.round((PATTERN_TOTAL / POST_N) * 100) / 100;
 const Session = require('../src/models/Session');
+const QuestionModel = require('../src/models/Question');
+
+// الخادم لا يكشف الإجابة الصحيحة للطالب، فتقرأ الاختبارات مفتاح الإجابة من
+// قاعدة البيانات مباشرة، بالترتيب نفسه الذي أرسله الخادم.
+const answerKey = async (questions) => {
+  const docs = await QuestionModel.find({ _id: { $in: questions.map((q) => q._id) } });
+  return questions.map((q) => {
+    const doc = docs.find((d) => String(d._id) === String(q._id));
+    return {
+      ...q,
+      options: doc.options.map((o) => ({ _id: String(o._id), text: o.text, isCorrect: o.isCorrect })),
+    };
+  });
+};
 
 // مقياس الفائدة المدركة: بعد آخر سؤال وقبل النتيجة
 const U_N = USEFULNESS_SURVEY.items.length;
@@ -374,7 +388,7 @@ describe('المقياس البعدي', () => {
 
   test('سؤال تجاوز الوقت يُحسب في الأسئلة التي تجاوزت الوقت المسموح', async () => {
     const start = await request('/exam/POSTEX1/start', { method: 'POST', token: users.studentToken });
-    const [q0] = start.body.data.questions;
+    const [q0] = await answerKey(start.body.data.questions);
 
     // السؤال الأول: خطأ ثم صواب — والسؤال الثاني لم يُجب (انتهى وقته)
     for (const option of [wrongOptionOf(q0), correctOptionOf(q0)]) {
@@ -439,7 +453,7 @@ describe('المقياس البعدي', () => {
   test('الاختبار المغلق بعد النتيجة لا يحرم الطالب من المقياس البعدي', async () => {
     const closing = await makeFeedbackExam({ questionCount: 1, code: 'CLOSEX1' });
     const start = await request('/exam/CLOSEX1/start', { method: 'POST', token: users.studentToken });
-    const [q] = start.body.data.questions;
+    const [q] = await answerKey(start.body.data.questions);
     await request('/exam/CLOSEX1/submit', {
       method: 'POST',
       token: users.studentToken,
@@ -481,7 +495,7 @@ describe('سجل الدرجات', () => {
       method: 'POST',
       token: users.studentToken,
     });
-    const [q0, q1] = start.body.data.questions;
+    const [q0, q1] = await answerKey(start.body.data.questions);
 
     // السؤال الأول: خطأ مرتين (نفدت محاولاته) — والثاني صحيح
     for (let i = 0; i < 2; i++) {
@@ -620,7 +634,7 @@ describe('الاستئناف بعد إعادة التحميل', () => {
       method: 'POST',
       token: users.studentToken,
     });
-    [q0, q1] = start.body.data.questions;
+    [q0, q1] = await answerKey(start.body.data.questions);
   });
 
   const resume = () => request('/exam/RATEEX1/start', { method: 'POST', token: users.studentToken });
@@ -705,7 +719,7 @@ describe('عدد الطلاب في صفحة الاختبار', () => {
       method: 'POST',
       token: users.studentToken,
     });
-    const [q] = start.body.data.questions;
+    const [q] = await answerKey(start.body.data.questions);
     await request('/exam/COUNTEX1/submit', {
       method: 'POST',
       token: users.studentToken,
@@ -729,7 +743,7 @@ describe('حذف سجل طالب في اختبار تغذية راجعة', () =>
   const fullRun = async () => {
     const start = await request('/exam/RESETEX1/start', { method: 'POST', token: users.studentToken });
     assert.equal(start.status, 200, start.body.message);
-    const [q] = start.body.data.questions;
+    const [q] = await answerKey(start.body.data.questions);
     await request('/exam/RESETEX1/submit', {
       method: 'POST',
       token: users.studentToken,
@@ -873,7 +887,7 @@ describe('جلسة بدأت قبل تغيير الترتيب', () => {
   test('من أجاب عن المقياس البعدي قبل التسليم تُسجَّل نتيجته فور التسليم', async () => {
     const legacyExam = await makeFeedbackExam({ questionCount: 1, code: 'OLDORD1' });
     const start = await request('/exam/OLDORD1/start', { method: 'POST', token: users.studentToken });
-    const [q] = start.body.data.questions;
+    const [q] = await answerKey(start.body.data.questions);
     await request('/exam/OLDORD1/submit', {
       method: 'POST',
       token: users.studentToken,
@@ -899,5 +913,54 @@ describe('جلسة بدأت قبل تغيير الترتيب', () => {
 
     const exam = await request(`/exams/${legacyExam.exam._id}`, { token: users.adminToken });
     assert.equal(exam.body.data.completedCount, 1);
+  });
+});
+
+describe('الإجابات الصحيحة لا تصل إلى المتصفح قبل الأوان', () => {
+  let questions;
+
+  test('الأسئلة عند البدء بلا إجابة صحيحة ولا تعليق عليها', async () => {
+    await makeFeedbackExam({ questionCount: 2, code: 'LEAKEX1' });
+    const start = await request('/exam/LEAKEX1/start', { method: 'POST', token: users.studentToken });
+    assert.equal(start.status, 200, start.body.message);
+    const payload = JSON.stringify(start.body.data.questions);
+    assert.equal(payload.includes('isCorrect'), false, 'لا علامة للإجابة الصحيحة');
+    assert.equal(payload.includes('correctExplanation'), false, 'ولا تعليق الإجابة الصحيحة');
+    assert.equal(payload.includes('feedback'), false, 'ولا نصوص التغذية الراجعة');
+    for (const p of start.body.data.progress) {
+      assert.equal(p.correctOptionId, undefined);
+    }
+    questions = await answerKey(start.body.data.questions);
+  });
+
+  test('الإجابة الصحيحة تُعيد تعليقها في لحظتها', async () => {
+    const [q] = questions;
+    const res = await request('/exam/LEAKEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q._id, optionId: correctOptionOf(q)._id },
+    });
+    assert.equal(res.status, 200, res.body.message);
+    assert.equal(res.body.data.correctExplanation, 'لأنها تطابق التعريف.');
+  });
+
+  test('الإجابة الخاطئة لا تكشف الصحيحة', async () => {
+    const [, q] = questions;
+    const res = await request('/exam/LEAKEX1/submit', {
+      method: 'POST',
+      token: users.studentToken,
+      body: { questionId: q._id, optionId: wrongOptionOf(q)._id },
+    });
+    assert.equal(res.status, 200, res.body.message);
+    assert.equal(res.body.data.correctExplanation, '');
+    assert.equal(JSON.stringify(res.body.data).includes(String(correctOptionOf(q)._id)), false);
+  });
+
+  test('بعد إعادة التحميل: السؤال المُصاب وحده يعود بإجابته وتعليقها', async () => {
+    const start = await request('/exam/LEAKEX1/start', { method: 'POST', token: users.studentToken });
+    const [answered, wrongOnly] = start.body.data.progress;
+    assert.equal(String(answered.correctOptionId), String(correctOptionOf(questions[0])._id));
+    assert.equal(answered.correctExplanation, 'لأنها تطابق التعريف.');
+    assert.equal(wrongOnly.correctOptionId, undefined, 'سؤال لم يُصب لا تُكشف إجابته');
   });
 });

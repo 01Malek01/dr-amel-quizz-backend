@@ -153,6 +153,9 @@ const start = asyncHandler(async (req, res) => {
       }
     }
 
+    // سؤال أجاب عنه صحيحًا: تعود الإجابة وتعليقها لإعادة عرضهما بعد التحميل
+    const correct = isCorrect ? q.options.find((o) => o.isCorrect) : null;
+
     return {
       questionId: q._id,
       attempts,
@@ -160,6 +163,9 @@ const start = asyncHandler(async (req, res) => {
       isCorrect,
       exhausted,
       lastFeedback,
+      ...(correct
+        ? { correctOptionId: correct._id, correctExplanation: correct.correctExplanation || '' }
+        : {}),
     };
   });
 
@@ -168,12 +174,12 @@ const start = asyncHandler(async (req, res) => {
     order: q.order,
     text: q.text,
     image: q.image,
+    // لا تُرسل الإجابة الصحيحة ولا تعليقها مع الأسئلة: كانت تظهر لأي طالب يفتح
+    // أدوات المطوّر في المتصفح. تُرسل فقط بعد أن يجيب عن السؤال صحيحًا.
     options: q.options.map((o) => ({
       _id: o._id,
       text: o.text,
       image: o.image,
-      isCorrect: o.isCorrect,
-      correctExplanation: o.isCorrect ? o.correctExplanation || '' : '',
     })),
   }));
 
@@ -297,6 +303,8 @@ const submit = asyncHandler(async (req, res) => {
       attemptsLeft,
       badgeEarned,
       exhausted,
+      // تعليق الإجابة الصحيحة يُرسل الآن فقط، بعد أن أصاب الطالب
+      correctExplanation: isCorrect ? option.correctExplanation || '' : '',
       feedback: isCorrect
         ? null
         : { type: feedbackType, label: FEEDBACK_TYPE_LABELS[feedbackType], content: option.feedback[feedbackType] || '' },
